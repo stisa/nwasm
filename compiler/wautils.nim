@@ -1,6 +1,6 @@
 import
-  ast, astalgo, types, msgs, wordrecg, trees, ropes,
-  wasm/[watypes,wasecs,waenums,waencodes,leb128]
+  ../Nim/compiler/[ast, astalgo, types, msgs, wordrecg, trees, ropes],
+  watypes,wasecs,waenums,waencodes,leb128
 from strutils import toHex, Digits
 
 proc getPragmaStmt*(n: PNode, w: TSpecialWord): PNode =
@@ -16,19 +16,6 @@ proc getPragmaStmt*(n: PNode, w: TSpecialWord): PNode =
 
 proc stmtsContainPragma*(n: PNode, w: TSpecialWord): bool =
   result = getPragmaStmt(n, w) != nil
-
-proc fillLoc*(a: var TLoc, k: TLocKind, typ: PType, r: Rope, s: TStorageLoc) =
-  # fills the loc if it is not already initialized
-  if a.k == locNone:
-    a.k = k
-    a.t = typ
-    a.s = s
-    if a.r == nil: a.r = r
-
-proc pad*(s:var string) =
-  doAssert(s.len <= 4)
-  if s.len mod 4 == 0: return # fine
-  else: s.setLen(4)
 
 proc mapType*(tt:PType):ValueType =
   let t = if not tt.isNil: tt.skipTypes(abstractVarRange) else: tt

@@ -1,16 +1,16 @@
 import
-  ast, astalgo, options, msgs, idents, types, passes, rodread,
-  ropes, tables, wordrecg,
-  ospaths, os, extccomp,strutils,
-  wautils, wasm/[warender,watypes,wasecs,waenums,waencodes,wanodes,leb128]
+  ../Nim/compiler/[ast, astalgo, options, msgs, idents, types, passes, rodread,
+  ropes, wordrecg,extccomp],
+  ospaths,tables, os, strutils,
+  wautils, warender,watypes,wasecs,waenums,waencodes,wanodes,leb128
 
 from math import ceil,log2
 
-from modulegraphs import ModuleGraph
+from ../Nim/compiler/modulegraphs import ModuleGraph
 
 import typetraits # TEMPORARY
 
-include wasm/waglue.templ # TODO: check out how nimdoc does overloading of template
+include ../lib/wasm/waglue.templ # TODO: check out how nimdoc does overloading of template
 
 type
   WasmGen = ref object of TPassContext
@@ -288,8 +288,6 @@ proc genIdentDefs(w: WasmGen, n: PNode) =
   let 
     s = n[0].sym
   s.offset = w.memOffset
-  #echo typeToYaml s.typ
-  #fillLoc(s.loc, locGlobalVar, s.typ, rope(w.memOffset), OnHeap)
   w.store(n[2], s)
 
 proc putVar(w:WasmGen, n:PNode) = 
