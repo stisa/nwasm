@@ -1,40 +1,42 @@
 import watypes, waenums, wanodes, strutils
 
-proc render(s: SecCode): string {.inline.} = $s
+proc render(s: SecCode): string {.inline.} = "{ \"$1\": " % $s
 
-proc render(w: WasmType): string {.inline.} = $w
+proc render(w: WasmType): string {.inline.} = "\"" & $w & "\""
 
 proc render(v:ValueType): string {.inline.} = $v
 
-proc render(b:BlockType): string {.inline.} = $b
+proc render(b:BlockType): string {.inline.} = "\"" & $b & "\""
 
-proc render(e: ElemType): string {.inline.} = $e
+proc render(e: ElemType): string {.inline.} = "\"" & $e & "\""
 
-proc render(e:ExternalKind): string {.inline.} = $e
+proc render(e:ExternalKind): string {.inline.} = "\"" & $e & "\""
 
-proc render(w: WasmOpKind): string {.inline.} = $w
+proc render(w: WasmOpKind): string {.inline.} = "\"" & $w & "\""
 
 proc render*(ft:FuncType):string =
-  var params: string = if ft.params.isNil or ft.params.len == 0: "None" else: ""
+  var params: string = if ft.params.isNil or ft.params.len == 0: "\"None\"" else: ""
   for p in ft.params:
-    add params, $ft.params.len & "x" & render(p)
+    add params, "\"" & $ft.params.len & "x" & render(p) & "\""
   let returns = if ft.returns.len>0:
       render(ft.returns[0])
-    else: "None"
+    else: "\"None\""
   
   result = """
-  fnType: $1,
-    params: $2,
-    return: $3
+  {
+    "kind": $1,
+    "params": $2,
+    "return": $3
+  },
 """ % [render(ft.form), params, returns]
 
 proc render*(le:LocalEntry):string =
-  "count: $1, type: $2\n" % [$le.count, render(le.vtype)]
+  "\"count\": $1, \"type\": $2\n" % [$le.count, render(le.vtype)]
 
 proc render*(x:SomeNumber):string {.inline.} = $x
 
 proc render(mi: MemoryImmediate): string =
-  "align: $1, offset: $2\n" % [$mi.align, $mi.offset]
+  "\"align\": $1, \"offset\": $2" % [$mi.align, $mi.offset]
 
 proc render*(op: WasmNode): string
 
@@ -47,25 +49,28 @@ proc render*(op: WasmNode): string =
   of woNop, woUnreachable:
     result = render(op.kind)
   of UnaryOp:
-    result = render(op.a) & render(op.kind)
+    result = "{\"kind\": $1, \"arg\": $2}" % [render(op.kind), render(op.a)]
   of BinaryOp:
-    result = render(op.a) & render(op.b) & render(op.kind)
+    result = "{\"kind\": $1, \"args\": [$2, $3]}" % [render(op.kind), render(op.a), render(op.b)]
   of woCall:
+    var tmp = ""
     for o in op.sons:
-      add result, render(o)
-    add result, render(op.kind)
+      add tmp, render(o) & ","
     if not op.isImport:
       op.funcIndex = op.funcIndex+totalImports
-    add result, $op.funcIndex
+    result = "{\"kind\": $1, \"idx\": $3, \"args\": [$2]}" % [
+      render(op.kind), tmp, $op.funcIndex
+    ]
+    
   of Consts:
-    result = render(op.kind)
-    # Consts value is already rendered
-    #TODO: result.add(op.value.string)
+    result = "{\"kind\": $1, \"value\": $2}" % [render(op.kind), op.value.escape]
   of MemLoad, MemStore:
+    var tmp = ""
     for o in op.sons:
-      if not o.isNil: add result, render(o)
-    add result , render(op.kind)
-    add result, render(op.memoryImm)
+      if not o.isNil: add tmp, render(o)
+    result = """{"kind": $1, "what": $2, "memImm": {$3}}""" % [
+      render(op.kind), tmp, render(op.memoryImm)
+    ]
   of woGetGlobal:
     add result, render(op.kind)
     add result, $op.globalIndex
@@ -109,38 +114,39 @@ proc render*(op: WasmNode): string =
     add result, render(op.kind)
   else:
     doAssert(false,"unrenderd op " & $op.kind)
-  add result, "\n"
 
 proc render*(fb:FunctionBody):string =
   result = ""
   for loc in fb.locals:
     if loc.vtype != ValueType.None:
-      add result, render(loc)
+      add result, "\n  " & render(loc)
   for op in fb.code:
-    add result, render(op)
+    add result, "  " & render(op)
 
 proc render*(fs:FunctionSection):string =
   result = render(SecCode.Function)
   for i in fs.entries:
     add result, " " & $i & "," 
-  add result, "\n"
+  add result, "},\n"
   
 proc render*(ts:TypeSection):string =
   result = render(SecCode.Type)
-  add result, "\n"
+  add result, "[\n"
   for entry in ts.entries:
     add result, render(entry)
-  
+  add result, "  ]\n},\n"
 proc render*(ie:ImportEntry):string = 
-  result = ""
-  add result, ie.module
-  add result, ie.field
-  add result, render(ie.kind)
+  result = """
+  {
+    "module": "$1",
+    "name": "$2",
+    "kind": $3,  
+""" % [ie.module, ie.field, render(ie.kind)]
   case ie.kind:
   of ExternalKind.Function :
-    add result, $ie.typeindex
+    add result, "    \"importId\": $1\n  }," % $ie.typeindex
   else:
-    doAssert(false,"TODO: implemnt other kinds for importentry")
+    doAssert(false,"TODO: implement other kinds for importentry")
   #of ExternalKind.Table:
   #  ttype*: TableType
   #of ExternalKind.Memory:
@@ -151,37 +157,42 @@ proc render*(ie:ImportEntry):string =
 
 proc render* (isec:ImportSection):string =
   result = render SecCode.Import
+  add result, "[\n"
   for entry in isec.entries:
     add result, render(entry)
-  add result, "\n"
+  add result, "  ]\n},\n"
 
 proc render*(ee:ExportEntry):string = 
-  result = ""
-  add result, ee.field
-  add result, render ee.kind
-  # FIXME: hoisting imports means we need to calc index
   if not(ee.isImported) and ee.kind == ExternalKind.Function:
     ee.index = ee.index+totalImports
-  add result, $ee.index
-  add result, "\n"
+  result = """
+  {
+    "field": "$1",
+    "kind": $2,
+    "exportId": $3
+  },
+""" % [ee.field, render(ee.kind), $ee.index]
 
 proc render*(es:ExportSection):string =
-  result = render SecCode.Export
+  result = render(SecCode.Export) & "[\n"
   for entry in es.entries:
     add result, render(entry)
+  add result, "  ]\n},\n"
 
 proc render*(cs:CodeSection):string =
-  result = render SecCode.Code
+  result = render(SecCode.Code) & "[\n"
   for bd in cs.entries:
     add result, render(bd)
-  add result, "\n"
+  add result, "\n  ]\n},\n"
 
 proc render(ll:ResizableLimits):string =
-  result = $ll.flags
-  add result, $ll.initial
+  result = """  {
+    "hasMax": $1,
+    "initial": $1
+  },
+""" %  [$ll.flags, $ll.initial]
   if ll.flags == 1:
     add result, $ll.maximum
-  add result, "\n"
 
 proc render(tt:TableType):string =
   result = render tt.elementType
@@ -196,20 +207,25 @@ proc render(mt:MemoryType):string =
   result = render(mt.limits)
 
 proc render(ms:MemorySection):string =
-  result = render SecCode.Memory
+  result = render(SecCode.Memory) & "[\n"
   for el in ms.entries:
     add result, render(el)
-  add result, "\n"
+  add result, "  ]\n},\n"
 
 proc render(dt:DataSegment):string =
-  result = $dt.index
-  add result, render(dt.offset)
-  #add result, dt.data.escape
-  add result, "\n"
+  result = """
+  {
+    "idx": $1,
+    "offs": $2,
+    "data": $3
+  },
+""" % [ $dt.index, render(dt.offset), dt.data.escape]
+
 proc render(ds:DataSection):string =
-  result = render SecCode.Data
+  result = render(SecCode.Data) & "[\n"
   for el in ds.entries:
     add result, render(el)
+  add result, "  ]\n}\n"
 
 proc render*(ss:StartSection):string =
   result = render SecCode.Start
@@ -217,7 +233,7 @@ proc render*(ss:StartSection):string =
   add result, "\n"
 
 proc render*(m:Module):string = 
-  result = "Module \n"# & m.magic.toHex() & m.version.toHex() & "\n"
+  result = "{\"Module\":[\n"# & m.magic.toHex() & m.version.toHex() & "\n"
   if not m.types.isnil and m.types.entries.len>0: #1
     add result, render(m.types)
   else:
@@ -266,5 +282,5 @@ proc render*(m:Module):string =
     echo "TODO: implement custom section"
   else:
     echo "custom sec is nil"
-  
+  add result, "]}"
   
