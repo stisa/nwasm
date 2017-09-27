@@ -13,7 +13,7 @@ import
   llstream, strutils, ast, astalgo, lexer, syntaxes, renderer, options, msgs,
   os, condsyms, rodread, rodwrite, times,
   wordrecg, sem, semdata, idents, passes, docgen, extccomp,
-  cgen, jsgen, json, nversion,
+  cgen, jsgen, json, nversion, wasmgen,
   platform, nimconf, importer, passaux, depends, vm, vmdef, types, idgen,
   docgen2, service, parser, modules, ccgutils, sigmatch, ropes,
   modulegraphs
@@ -144,6 +144,18 @@ proc commandScan(cache: IdentCache) =
   else:
     rawMessage(errCannotOpenFile, f)
 
+proc commandCompileToWasm(graph:ModuleGraph, cache: IdentCache) = 
+    setTarget(osJS, cpuJS)
+    defineSymbol("nimrod")
+    defineSymbol("wasm")
+    undefSymbol("js") # don't know why this is defined...
+    semanticPasses()
+    registerPass(WAsmGenPass)
+    # this should bypass system...
+    systemFileIdx = fileInfoIdx(options.libpath/"system"/"wasmsys.nim")
+    discard graph.compileModule(systemFileIdx, cache, {sfSystemModule})  
+    compileProject(graph, cache)
+
 const
   SimulateCaasMemReset = false
   PrintRopeCacheStats = false
@@ -183,6 +195,9 @@ proc mainCommand*(graph: ModuleGraph; cache: IdentCache) =
   of "js", "compiletojs":
     gCmd = cmdCompileToJS
     commandCompileToJS(graph, cache)
+  of "wasm":
+    gCmd = cmdCompileToWasm
+    commandCompileToWasm(graph,cache)
   of "php":
     gCmd = cmdCompileToPHP
     commandCompileToJS(graph, cache)
