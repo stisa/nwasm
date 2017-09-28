@@ -285,6 +285,8 @@ proc store(w:WasmGen, n:PNode, s:PSym = nil) =
     #echo "# store nkBracket"
     #echo treeToYaml n
     w.storeInInit(s,n)
+  of nkCall:
+    w.initExprs.add(w.gen(n))
   else:
     echo " # storing in init a non-literal: ", n.kind
     w.storeInInit(s, n)
@@ -554,6 +556,7 @@ proc genEcho(w:WasmGen,s:PSym) =
       "echo", ExternalKind.Function, w.nextImportIndex, true
     )
   )
+  w.m.add(w.nextTotalFuncIdx)
   w.generatedProcs.add("echo",(w.nextImportIndex.int,true))
   w.incNextImportIndex
   inc w.nextTotalFuncIdx
@@ -622,6 +625,46 @@ proc genDec(w:WasmGen, s:PSym) =
 proc genNew(w: WasmGen, s:PSym) =
   # kind of like a simplified malloc?
   echo "# genNew"
+  # load bottom memory pointer
+  # add `size` to it
+  # store back into bottom memory pointer
+  w.m.add( # Take an I32 `typesize` and add it to bottom memory pointer
+            # Return new btm mem ptr
+    newFnType(ValueType.I32, WasmType.Func, ValueType.I32)
+  )
+  w.m.add(
+    newFnBody(
+      [newStore(
+        memStoreI32,
+        newBinaryOp(
+          ibAdd32,
+          newLoad(
+            memLoadI32,
+            heapPtrLoc, 1'i32,
+            newConst(0'i32)
+          ),
+          newGet(woGetLocal, 0)
+        ),
+        heapPtrLoc, 
+        newConst(0'i32)
+      ), 
+      newLoad(
+        memLoadI32,
+        heapPtrLoc, 1'i32,
+        newConst(0'i32)
+      )]
+    )
+  )
+  
+  w.m.add(w.nextTotalFuncIdx)
+
+  w.generatedProcs.add(s.mangleName,(w.nextFuncIdx.int,false))
+  inc w.nextFuncIdx
+  inc w.nextTotalFuncIdx
+
+proc genNewSeq(w: WasmGen, s:PSym) =
+  # kind of like a simplified malloc?
+  echo "# genNewSeq"
   # load bottom memory pointer
   # add `size` to it
   # store back into bottom memory pointer
@@ -776,17 +819,24 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
   of mUnaryLt:
     result = newBinaryOp( ibSub32, args[0], newConst(1'i32) )
   of mSucc:
-    echo treeToYaml n
     result = newBinaryOp( ibAdd32, args[0], args[1] )
   of mPred:
     result = newBinaryOp( ibSub32, args[0], args[1] )
-  
-  #[of mAnd:
-    result = newBinaryOp(ibAnd32, w.gen(n[1]), w.gen(n[2]))
-  of mXor:
-    result = newBinaryOp(ibXor32, w.gen(n[1]), w.gen(n[2]))
-  of mOr:
-    result = newBinaryOp(ibOr32, w.gen(n[1]), w.gen(n[2]))]#
+  of mNewSeq:
+    echo "-- mNewSeq --"
+    echo treeToYaml n
+    #echo typeToYaml n[1].typ.lastSon
+    if needsGen: genNewSeq(w,s)
+    let 
+      size = if n[1].typ.lastSon.size<4: 4 else: n[1].typ.lastSon.size.int
+      (idx, isImport) = w.generatedProcs[s.mangleName] 
+    result = newStore(
+      memStoreI32,
+      # newSeq( varseq, len)
+      newCall(idx, newBinaryOp(ibMul32, args[^1], newConst(size.int32)), isImport),
+      0'i32,
+      newConst(n[1].sym.crazyLoc)
+    )
   else:
     debug s
     internalError("# missing magic " & $s.name.s & " " & $s.magic)
@@ -812,7 +862,7 @@ proc getObjFieldOffset(obj: PSym, field:PSym): int =
 
 proc getLoadKind(typ:PType):WasmOpKind =
   case typ.skipTypes(abstractVarRange).kind:
-  of tyInt,tyBool, tyRef, tyEnum, tyPointer,tyChar, tyString: result = memLoadI32
+  of tyInt,tyBool, tyRef, tyEnum, tyPointer,tyChar, tyString, tySequence: result = memLoadI32
   of tyFloat: result = if typ.size == 4 : memLoadF32 else: memLoadF64
   of tyFloat32: result = memLoadF32
   else:
@@ -869,8 +919,22 @@ proc genArrayAccess(w:WasmGen, n: PNode): WasmNode =
   #echo treeToYaml n
   case n[1].kind:
   of nkIntLit:
-    let elemOffset = n[0].sym.crazyLoc + (n[0].typ.lastSon.size * n[1].intVal).int32
-    result = n.accessAux(elemOffset)
+    echo treeToYaml n
+    if n[0].typ.kind == tySequence:
+      result = n.accessAux(
+        newBinaryOp(
+          ibAdd32,
+          newLoad(memLoadI32, 0'i32, 1'i32, newConst(n[0].sym.crazyLoc)),
+          newBinaryOp(
+            ibMul32,
+            newConst(n[0].typ.lastSon.size.int32),
+            w.gen(n[1])
+          )
+        )
+      )
+    else:
+      let elemOffset = n[0].sym.crazyLoc + (n[0].typ.lastSon.size * n[1].intVal).int32
+      result = n.accessAux(elemOffset)
   of nkSym:
     result = n.accessAux(
       newBinaryOp(
@@ -933,6 +997,37 @@ proc genAsgn(w:WasmGen, lhsNode, rhs: PNode): WasmNode =
       lhsOffset = lhsNode[1].sym.crazyLoc
     else:
       internalError("genAsgn nkDotExpr error")
+  of nkBracketExpr:
+    # lhs[i] = rhs
+    if lhsNode[0].kind == nkSym:
+      lhsIndex = newLoad(memLoadI32, 0'i32, 1'i32, newConst(lhsNode[0].sym.crazyLoc))
+    elif lhsNode[0].kind in {nkHiddenDeref}:
+      #echo lhsNode[0][0].sym.name.s, lhsNode[0][0].sym.crazyLoc, " // ", lhsNode[1].sym.name.s, lhsNode[1].sym.crazyLoc
+      lhsIndex = newLoad(
+        memLoadI32,
+        0'i32, 1'i32,
+        newConst(lhsNode[0][0].sym.crazyLoc)
+      )
+    else:
+      internalError("genAsgn nkBracketExpr error")
+    case lhsNode[1].kind:
+      of nkIntLit:
+        lhsOffset = (lhsNode[0].typ.lastSon.size * lhsNode[1].intVal).int32
+      of nkSym:
+        lhsIndex = newBinaryOp(
+          ibAdd32,
+          lhsIndex,
+          newBinaryOp(
+            ibMul32,
+            newConst(lhsNode[0].typ.lastSon.size.int32),
+            w.gen(lhsNode[1])
+          )
+        )
+      else:
+        internalError("# genAsgn nkBracketExpr missing branch " & $lhsNode[1].kind)
+
+    echo render lhsIndex
+    echo render lhsOffset
   else: 
     internalError("unhandled lhs kind " & $lhsNode.kind)
   
@@ -999,6 +1094,20 @@ proc putTypeInfo(w:WasmGen, n:PNode) =
   s.offset = w.memOffset
   w.memOffset += 4
 
+proc putResultVar(w:WasmGen, n:PNode) =
+  #echo treeToYaml n
+  let s = n.sym
+  # what = n.sym.ast[0]
+  echo "storing: ", s.name.s, "at ", w.memOffset
+  let storeResultVar = newStore(
+    memStoreI32,
+    newConst(0'i32), w.memOffset, newConst(0'i32)
+  )
+  w.initExprs.add(storeResultVar)
+  s.offset = w.memOffset
+  w.memOffset += 4
+  
+
 proc gen(w: WasmGen, n: PNode): WasmNode =
   echo $n.kind
   case n.kind:
@@ -1021,6 +1130,9 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       if not w.generatedTypeInfos.hasKey(mangleName(n.sym)):
         echo "generating skType"
         w.putTypeInfo(n)
+    of skResult:
+      #echo "#skResult"
+      w.putResultVar(n)
     else:
       echo "discard sk: " & $n.sym.kind & " name: " & n.sym.name.s
     if n.typ.skipTypes(abstractVarRange).kind in passedAsBackendPtr: #needsDeref
@@ -1103,6 +1215,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     result = genConv(frm, to, w.gen(n[1]))
   of nkDerefExpr:
     result = w.genDeref(n[0])
+  of nkCommentStmt: discard # not used
   else:
     internalError("# no gen yet " & $n.kind)
     #echo treeToYaml n

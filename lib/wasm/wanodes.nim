@@ -179,6 +179,7 @@ proc newStore*(kind:WasmOpKind, what: varargs[WasmNode],offset: int32,index:Wasm
   )
 
 
+
 proc newEnd*():WasmNode {.inline.} = newWANode(woEnd) 
 
 proc newWhileLoop*(cond:WasmNode, inner:WasmNode):WasmNode =
