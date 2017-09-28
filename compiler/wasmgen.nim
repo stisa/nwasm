@@ -403,6 +403,8 @@ proc putProc(w:WasmGen, s:PSym) =
     if s.flags.contains(sfExported):
       # fixme better disambiguation of exported procs
       w.m.add(newExportEntry(s.mangleName,ExternalKind.Function,w.nextImportIndex, true)) 
+    
+    # w.m.add(w.nextTotalFuncIdx)
     w.generatedProcs.add(s.mangleName, (w.nextImportIndex,true)) 
     w.incNextImportIndex 
     inc w.nextTotalFuncIdx
@@ -662,7 +664,7 @@ proc genNew(w: WasmGen, s:PSym) =
   inc w.nextFuncIdx
   inc w.nextTotalFuncIdx
 
-proc genNewSeq(w: WasmGen, s:PSym) =
+proc genNewSeq(w: WasmGen, s: PSym, setLen: bool = false) =
   # kind of like a simplified malloc?
   echo "# genNewSeq"
   # load bottom memory pointer
@@ -672,6 +674,9 @@ proc genNewSeq(w: WasmGen, s:PSym) =
             # Return new btm mem ptr
     newFnType(ValueType.I32, WasmType.Func, ValueType.I32)
   )
+  echo "tttttttttttttttt"
+  echo render w.m.functions
+  echo w.nextTotalFuncIdx
   w.m.add(
     newFnBody(
       [newStore(
@@ -822,14 +827,15 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     result = newBinaryOp( ibAdd32, args[0], args[1] )
   of mPred:
     result = newBinaryOp( ibSub32, args[0], args[1] )
-  of mNewSeq:
+  of mNewSeq, mNewSeqOfCap:
     echo "-- mNewSeq --"
-    echo treeToYaml n
+    #echo treeToYaml n
     #echo typeToYaml n[1].typ.lastSon
     if needsGen: genNewSeq(w,s)
     let 
       size = if n[1].typ.lastSon.size<4: 4 else: n[1].typ.lastSon.size.int
       (idx, isImport) = w.generatedProcs[s.mangleName] 
+    # TODO: if newSeq : store len somewhere? maybe next at first elem ( like strings )
     result = newStore(
       memStoreI32,
       # newSeq( varseq, len)
@@ -1149,12 +1155,10 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
         n.sym.crazyLoc, 1'i32,
         newConst(0'i32)
       )
-  of nkStrLit:
-    # store the literal (in heap?)
-    #var ofs = w.memOffset.int
-    result = newConst(w.memOffset) # result points to literal    
-    w.initExprs.add(newStore(memStoreI32, n.strVal, w.memOffset))
-    #w.memOffset = ofs
+  #of nkStrLit:
+  #  # store the literal (in heap?)
+  #  result = newConst(w.memOffset) # result points to literal    
+  #  w.initExprs.add(newStore(memStoreI32, n.strVal, w.memOffset))
   of nkBracket:
     result = newWANode(opGroup)
     for son in n.sons:

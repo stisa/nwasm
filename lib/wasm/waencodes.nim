@@ -472,12 +472,12 @@ proc encode*(fb:FunctionBody):string =
 proc encode*(fs:FunctionSection):string =
   result = encode(SecCode.Function)
   var temp = fs.entries.len.int32.unsignedLEB128
-  for i in 0..<fs.entries.len:
+  for i in fs.entries:
     echo "# fsect",i
     # the actual function type index is:
     #   num imports ( because of hoisting... )
     # + actual index
-    add temp, (i+totalImports).int32.unsignedLEB128
+    add temp, (i).int32.unsignedLEB128
   add result, temp.len.int32.unsignedLEB128
   add result, temp
 
