@@ -1,11 +1,11 @@
 proc log[T](x:T) {.header:"glue", importc:"log".}
-
+proc check[T](x:T) {.header:"glue", importc:"assert".}
 var c = 1234
 var d = succ c
-log d # 1235
+check d == 1235
 var e = pred c 
-log e # 1233
+check e == 1233
 inc(d)
-log d # 1236
+check d == 1236
 dec(e)
-log e # 1232
+check e == 1232
