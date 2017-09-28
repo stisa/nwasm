@@ -78,7 +78,7 @@ function heapPtr(){
                     printInt: function(arg){
                         printInt(arg)
                     },
-                    console: function(arg){
+                    log: function(arg){
                         console.log(arg)
                     },
                     rawEcho: function(strptr) {
@@ -114,7 +114,7 @@ var nimWasmImports = {
         printInt: function(arg){
             printInt(arg)
         },
-        console: function(arg){
+        log: function(arg){
             console.log(arg)
         },
         rawEcho: function(strptr) {

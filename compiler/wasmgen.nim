@@ -59,6 +59,7 @@ proc newWasmGen(s:PSym): WasmGen =
       ]
   )
   result.m.exports = newExportSec(
+    # Export the default memory
     newExportEntry( "$memory", ExternalKind.Memory, 0)
   )
 
@@ -69,7 +70,7 @@ proc incNextImportIndex(w:WasmGen) = inc waencodes.totalImports
 proc getObjFieldOffset(obj: PSym, field:PSym): int
 
 const 
-  passedAsPtr = {tyString, tyVar, tyObject}
+  passedAsBackendPtr = {tyVar, tyObject}
   heapPtrLoc = 4'i32
 
 proc process(w: WasmGen, n: PNode)
@@ -81,39 +82,24 @@ proc mangleName(s:PSym):string =
   echo s.name.s, " " , s.kind #,"\n",typeToyaml s.typ
   case s.kind:
   of skType:
-    s.name.s.mangle & $s.typ.kind
+    result = s.name.s.mangle & $s.typ.kind
   else:
-    s.name.s.mangle & $s.typ[1].kind
-
+    result = s.name.s.mangle
+    for tson in s.typ.sons:
+      if not tson.isNil:
+        result.add("_" & $tson.kind)
+    
 proc getArrayLen(t:PType): int =
   doAssert t.kind == tyArray, $t.kind
   result = 1+(t[0].n[1].intVal - t[0].n[0].intVal).int
-
-#[proc calcFieldOffset(obj: PSym, field:PSym) =
-  # Get the offset by adding typ.size until the field in objType == `field`
-  # The zero is at the start of the object.
-
-  # TODO: use objTyp: PType instead of obj: PSym ?
-
-  if field.offset>=0 : return # field has been calculated already
-  field.offset = 0
-  let 
-    objType = if obj.typ.kind in {tyRef, tyPtr, tyVar}: obj.typ[0] else: obj.typ
-  assert( objtype.kind == tyObject, $objtype.kind)
-  for objf in objType.n:
-    if objf.sym == field: break
-    field.offset += objf.typ.size.int]#
 
 proc calcFieldOffset(obj: PType, field:PSym) =
   # Get the offset by adding typ.size until the field in objType == `field`
   # The zero is at the start of the object.
 
-  # TODO: use objTyp: PType instead of obj: PSym ?
-
   if field.offset>=0 : return # field has been calculated already
   field.offset = 0
-  #let 
-  #  objType = if obj.kind in {tyRef, tyPtr, tyVar}: obj[0] else: obj
+
   assert(not obj.isnil, "#1 nil objtype")
   let objType = obj.skipTypesOrNil({tyRef, tyPtr, tyVar, tyGenericInst})
   
@@ -129,8 +115,7 @@ proc crazyLoc(s:PSym):int32 =
     # TODO: check s.owner.typ is tyObject
     s.owner.typ.calcFieldOffset(s)
   doAssert(s.offset != -1, "uninitialized offset: " & s.name.s & " " & $result)
-  result = s.offset.int32 #($s.loc.r).parseInt.int32
-
+  result = s.offset.int32 
 #--------------putVar-------------------------------#
 proc store(w:WasmGen, n:PNode, s:PSym = nil)
 
@@ -189,7 +174,12 @@ proc storeInData(w:WasmGen,n:PNode,s:PSym = nil) =
     #echo "store nkFloat32Lit len ",  val.len
     if val.len mod 2 != 0: val.setLen(val.len+1)
   of nkStrLit, nkRStrLit, nkTripleStrLit:
-    val = n.strval.len.int32.toBytes & n.strval
+    # A string is represented as a pointer.
+    # The pointer points to the length, first byte of the string follows.
+    # So actual string pos is offset+4(ptr)+4(len), but string ptr points to
+    # offset+4
+    val = (w.memOffset+4).int32.toBytes & n.strval.len.int32.toBytes & n.strval
+    # FIXME: the \x00 terminator is not considered in len ?
     if val.len mod 2 != 0: val.setLen(val.len+1)
   else:
     internalError("trying to store non literal value for " & $n.kind)
@@ -251,6 +241,21 @@ proc storeInInit(w: WasmGen, where: PSym, what: PNode) =
     if w.memOffset < theoreticalMemOffset: 
       # Reserve space for all the object
       w.memOffset = theoreticalMemOffset.int32
+  of tySequence:
+    echo where.crazyLoc
+    w.initExprs.add( # at init time store the memory loc in the ptr
+      newStore(
+        memStoreI32,
+        newLoad(
+          memLoadI32,
+          heapPtrLoc, 1'i32,
+          newConst(0'i32)
+        ),
+        where.crazyLoc, 
+        newConst(0'i32)
+      )
+    ) # FIXME: the initial store is wrong?
+    w.memOffset += 4 # i32 => 4 bytes
   of tyArray:
     let theoreticalMemOffset =  w.memOffset + 
                                 what.typ.getArrayLen *
@@ -454,8 +459,8 @@ proc process(w:WasmGen, n:PNode) =
   of nkAsgn:
     w.initExprs.add(gen(w, n))
   else:
-    #discard
-    echo "#missing process case: ",$n.kind
+    discard
+    #echo "#missing process case: ",$n.kind
     #echo treeToYaml(n,0,2)
 
 #------------------putStartSec-------------------------#
@@ -593,6 +598,27 @@ proc genInc(w:WasmGen, s:PSym) =
   inc w.nextFuncIdx
   inc w.nextTotalFuncIdx
 
+proc genDec(w:WasmGen, s:PSym) =
+  echo "# genDec"
+  w.m.add( # Take an I32 `x` and I32 `y` and return their difference
+    newFnType(ValueType.I32, WasmType.Func, ValueType.I32, ValueType.I32)
+  )
+  w.m.add(
+    newFnBody(
+      newBinaryOp(
+        ibSub32,
+        newGet(woGetLocal, 0),
+        newGet(woGetLocal, 1)
+      )
+    )
+  )
+
+  w.m.add(w.nextTotalFuncIdx)
+
+  w.generatedProcs.add(s.mangleName,(w.nextFuncIdx.int,false))
+  inc w.nextFuncIdx
+  inc w.nextTotalFuncIdx
+
 proc genNew(w: WasmGen, s:PSym) =
   # kind of like a simplified malloc?
   echo "# genNew"
@@ -712,6 +738,15 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
                 newCall(idx, args, isImport),
                 n[1].sym.crazyLoc, 
                 newConst(0) )
+  of mDec:
+    if needsGen: genDec(w,s)
+    
+    let (idx, isImport) = w.generatedProcs[s.mangleName] 
+    result = newStore(
+                memStoreI32, 
+                newCall(idx, args, isImport),
+                n[1].sym.crazyLoc, 
+                newConst(0) )
   of mNot:
     #echo treeToYaml n
     result = newUnaryOp(itEqz32, w.gen(n[1]))
@@ -738,6 +773,14 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
       (idx, isImport) = w.generatedProcs[s.mangleName] 
     result = newCall(idx, newConst(n[1].sym.crazyLoc), newConst(size.int32), 
       isImport)
+  of mUnaryLt:
+    result = newBinaryOp( ibSub32, args[0], newConst(1'i32) )
+  of mSucc:
+    echo treeToYaml n
+    result = newBinaryOp( ibAdd32, args[0], args[1] )
+  of mPred:
+    result = newBinaryOp( ibSub32, args[0], args[1] )
+  
   #[of mAnd:
     result = newBinaryOp(ibAnd32, w.gen(n[1]), w.gen(n[2]))
   of mXor:
@@ -769,14 +812,14 @@ proc getObjFieldOffset(obj: PSym, field:PSym): int =
 
 proc getLoadKind(typ:PType):WasmOpKind =
   case typ.skipTypes(abstractVarRange).kind:
-  of tyInt,tyBool, tyRef, tyEnum, tyPointer,tyChar: result = memLoadI32
+  of tyInt,tyBool, tyRef, tyEnum, tyPointer,tyChar, tyString: result = memLoadI32
   of tyFloat: result = if typ.size == 4 : memLoadF32 else: memLoadF64
   of tyFloat32: result = memLoadF32
   else:
     internalError("# getloadkind not specified for " & $typ.kind & " as " & $typ.skipTypes(abstractVarRange).kind)
 
 proc accessAux(n: PNode, offset: int32): WasmNode =
-  if n.typ.kind in passedAsPtr: #needsDeref
+  if n.typ.kind in passedAsBackendPtr: #needsDeref
     when defined debug: echo "# accessAux passedAsPtr ", n[1].typ.kind,"name: ", n[1].sym.name.s ," loc: ",$n[1].sym.loc.r
     result = newConst(offset)
   else:
@@ -789,7 +832,7 @@ proc accessAux(n: PNode, offset: int32): WasmNode =
 
 proc accessAux(n: PNode, offset: WasmNode): WasmNode =
   #echo treeToYaml n
-  if n.typ.kind in passedAsPtr: #needsDeref
+  if n.typ.kind in passedAsBackendPtr: #needsDeref
     when defined debug: echo "# accessAuxNode passedAsPtr ", n[1].typ.kind," name: ", n[1].sym.name.s ," loc: ",$n[1].sym.offset
     result = newLoad(
       memLoadI32,
@@ -980,7 +1023,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
         w.putTypeInfo(n)
     else:
       echo "discard sk: " & $n.sym.kind & " name: " & n.sym.name.s
-    if n.typ.skipTypes(abstractVarRange).kind in passedAsPtr: #needsDeref
+    if n.typ.skipTypes(abstractVarRange).kind in passedAsBackendPtr: #needsDeref
       when defined debug: 
         echo "# passedAsPtr ", n.typ.kind," name: ", n.sym.name.s 
         #echo treeToYaml n
@@ -1108,7 +1151,7 @@ proc myClose(graph: ModuleGraph; b: PPassContext, n: PNode): PNode =
     else:
       changeFileExt(completeCFilePath(f), ext)
   writeFile(outfile, encode(w.m))
-  writeFile(outfile.changeFileExt("txt"), render(w.m))
+  writeFile(outfile.changeFileExt("json"), render(w.m))
   if w.s.flags.contains(sfMainModule): linkPass(outfile, w)
 
 proc myOpenCached(graph: ModuleGraph; s: PSym, rd: PRodReader): PPassContext =
