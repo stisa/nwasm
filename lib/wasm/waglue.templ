@@ -81,6 +81,9 @@ function heapPtr(){
                     log: function(arg){
                         console.log(arg)
                     },
+                    assert: function(arg){
+                        console.assert(arg)
+                    },
                     rawEcho: function(strptr) {
                     rawEcho(strptr)
                     }
@@ -116,6 +119,9 @@ var nimWasmImports = {
         },
         log: function(arg){
             console.log(arg)
+        },
+        assert: function(arg){
+            console.assert(arg)
         },
         rawEcho: function(strptr) {
         rawEcho(strptr)
