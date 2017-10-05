@@ -1,6 +1,8 @@
 import
-  ../Nim/compiler/[ast, astalgo, types, msgs, wordrecg, trees, ropes],
-  watypes,wasecs,waenums,waencodes,leb128
+  ../Nim/compiler/[ast, astalgo, types, msgs, wordrecg, trees, ropes]
+
+from wasmast import WasmValueType
+
 from strutils import toHex, Digits
 
 proc getPragmaStmt*(n: PNode, w: TSpecialWord): PNode =
@@ -17,38 +19,20 @@ proc getPragmaStmt*(n: PNode, w: TSpecialWord): PNode =
 proc stmtsContainPragma*(n: PNode, w: TSpecialWord): bool =
   result = getPragmaStmt(n, w) != nil
 
-proc mapType*(tt:PType):ValueType =
+proc mapType*(tt:PType):WasmValueType =
   let t = if not tt.isNil: tt.skipTypes(abstractVarRange) else: tt
-  if t.isNil: return ValueType.None
+  if t.isNil: return vtNone
   case t.kind:
   of tyBool,tyInt,tyInt32,tyUInt32,tyUInt,tyUInt8,tyInt16,
     tyString, tyPointer, tySequence, tyArray, tyProc,
     tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
-    result = ValueType.I32
+    result = vtI32
   of tyFloat32:
-    result = ValueType.F32
+    result = vtF32
   of tyFloat, tyFloat64:
-    result = ValueType.F64
+    result = vtF64
   else:
     internalError("unmapped type kind " & $t.kind)
-
-proc realSize(n:PNode,t:PType):BiggestInt =
-  let tsize = t.getSize
-  case t.kind:
-  of tyInt,tyInt32,tyUInt32,tyUInt,tyUInt8,tyInt16:
-    result = tsize
-  of tyFloat32:
-    result = tsize
-  of tyFloat, tyFloat64:
-    result = tsize
-  of tyString:
-    if n.kind==nkStrLit:
-      result = tsize+n.strVal.len
-    else:
-      result = tsize
-  else:
-    echo "realSize type kind ", $t.kind
-    result = tsize
 
 proc mangle*(name: string): string =
   result = newStringOfCap(name.len)

@@ -1,29 +1,25 @@
 import
   ../Nim/compiler/[ast, astalgo, options, msgs, idents, types, passes, rodread,
   ropes, wordrecg,extccomp],
-  ospaths,tables, os, strutils,
-  wautils, warender,watypes,wasecs,waenums,waencodes,wanodes,leb128
+  ospaths, tables, os, strutils,
+  wasmast, wasmstructure, wasmencode, wasmnode, wasmleb128, wasmutils
 
 from math import ceil,log2
 
 from ../Nim/compiler/modulegraphs import ModuleGraph
 
-import typetraits # TEMPORARY
-
-include ../lib/wasm/waglue.templ # TODO: check out how nimdoc does overloading of template
+include ../lib/wasm/wasmglue.templ # TODO: check out how nimdoc does overloading of template
 
 type
   WasmGen = ref object of TPassContext
-    startExprs: seq[WasmNode] # sequence of start exprs. for use in `start` sec
     initExprs: seq[WasmNode] # sequence of initializer expressions. for use in start sec
-    nextTotalFuncIdx: Natural # function index space ( doesn't account for hoisting of imported procs )
+    nextimportIdx: Natural # function index space ( doesn't account for hoisting of imported procs )
     nextFuncIdx: Natural # the function index space (only for non-imported funcs)
     nextGlobalIdx: Natural # the global index space
     nextMemIdx: Natural # the linear memory index space
     nextTableIdx: Natural # the table index space
-    memOffset: int32
     s: PSym # symbol of the current module, taken from myOpen
-    m : Module #current module
+    m : WasmModule #current module
     generatedProcs: Table[string,tuple[id:int,imported:bool]] # name, funcIdx
     generatedTypeInfos: Table[string, int32] # name, location in memory
     stack: tuple[top,bottom:int32] # stack pointers location, used in procs?
@@ -35,37 +31,17 @@ proc newWasmGen(s:PSym): WasmGen =
     )
   result.s = s
   result.nextFuncIdx = 0
-  result.nextTotalFuncIdx = 0
+  result.nextImportIdx = 0
   result.nextGlobalIdx = 0
-  result.nextMemIdx = 0
   result.nextTableIdx = 0
   # 4 byte aligned, reserve 8 bytes to store the stack pointer
   # This mean effective address start at 12?
-  result.memOffset = 12'i32 
+  result.nextMemIdx = 12
   result.initExprs = newSeq[WasmNode]()
-  result.startExprs = newSeq[WasmNode]()
-  result.m = newModule() #gen.modules[^1]
+  result.m = newModule(s.name.s) #gen.modules[^1]
   #initialize the module's sections
-  result.m.datas = newDataSec()
-  result.m.exports = newExportSec()
-  result.m.functions = newFnSec()
-  result.m.types = newTypeSec()
-  result.m.imports = newImportSec()
-  result.m.memory = MemorySection( # FIXME:proper memory asgn
-    entries: @[
-      MemoryType( 
-        limits: ResizableLimits(flags: 0, initial: 1 )
-        )
-      ]
-  )
-  result.m.exports = newExportSec(
-    # Export the default memory
-    newExportEntry( "$memory", ExternalKind.Memory, 0)
-  )
-
-proc nextImportIndex(w:WasmGen):int = waencodes.totalImports
-proc incNextImportIndex(w:WasmGen) = inc waencodes.totalImports
-#TODO:?  proc updateHeapPtr(w:WasmGen) 
+  result.m.memory = newMemory()
+  add result.m.exports, newExport(0, ekMemory, "$memory")
 
 const 
   passedAsBackendPtr = {tyVar, tyObject}
