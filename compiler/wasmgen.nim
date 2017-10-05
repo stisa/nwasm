@@ -67,8 +67,6 @@ proc nextImportIndex(w:WasmGen):int = waencodes.totalImports
 proc incNextImportIndex(w:WasmGen) = inc waencodes.totalImports
 #TODO:?  proc updateHeapPtr(w:WasmGen) 
 
-proc getObjFieldOffset(obj: PSym, field:PSym): int
-
 const 
   passedAsBackendPtr = {tyVar, tyObject}
   heapPtrLoc = 4'i32
@@ -76,10 +74,8 @@ const
 proc process(w: WasmGen, n: PNode)
 proc gen(w: WasmGen, n: PNode):WasmNode
 
-#proc genExpr(w: WasmGen, n: PNode):Op
-
 proc mangleName(s:PSym):string = 
-  echo s.name.s, " " , s.kind #,"\n",typeToyaml s.typ
+  echo "# mangleName ", s.name.s, " " , s.kind #,"\n",typeToyaml s.typ
   case s.kind:
   of skType:
     result = s.name.s.mangle & $s.typ.kind
@@ -109,7 +105,7 @@ proc calcFieldOffset(obj: PType, field:PSym) =
     field.offset += objf.typ.size.int
 
 proc crazyLoc(s:PSym):int32 = 
-  echo s.name.s, " owner: ", s.owner.name.s
+  echo "# crazyLoc ", s.name.s, " owner: ", s.owner.name.s
   if s.offset<0:
     #echo typeToYaml s.owner.typ
     # TODO: check s.owner.typ is tyObject
@@ -183,12 +179,7 @@ proc storeInData(w:WasmGen,n:PNode,s:PSym = nil) =
     if val.len mod 2 != 0: val.setLen(val.len+1)
   else:
     internalError("trying to store non literal value for " & $n.kind)
-    #[echo "#storeindata else ",$n.kind, " ", n.typ.size
-    let size = if n.typ.size<4: 4 else: n.typ.size.int # FIXME: proper sizing
-    val = '\0'.repeat(size) # Reserve space
-    #let store = newSt
-    w.initExprs.add(gen(w,n)) # Register an initialization expression
-    #echo treeToYaml n]#
+
   w.m.add(newDataSeg(w.nextMemIdx,w.memOffset, val))
   w.memOffset += val.len.int32
 
@@ -266,15 +257,13 @@ proc storeInInit(w: WasmGen, where: PSym, what: PNode) =
       # Reserve space for all the array
       w.memOffset = theoreticalMemOffset.int32
   else:
-    echo treeToYaml what
+    #echo treeToYaml what
     internalError("# storeInInit missing case: " & $where.typ.kind)    
 
 proc store(w:WasmGen, n:PNode, s:PSym = nil) =
   case n.kind:
   of nkEmpty:
     w.storeInData(n, s)
-    #echo treeToYaml n
-    #echo "offs ", s.offset
   of nkLiterals:
     w.storeInData(n)
   of nkExprColonExpr:
@@ -282,8 +271,6 @@ proc store(w:WasmGen, n:PNode, s:PSym = nil) =
   of nkInfix:
     w.storeInInit(s,n)
   of nkBracket:
-    #echo "# store nkBracket"
-    #echo treeToYaml n
     w.storeInInit(s,n)
   of nkCall:
     w.initExprs.add(w.gen(n))
@@ -300,10 +287,10 @@ proc genIdentDefs(w: WasmGen, n: PNode) =
 proc putVar(w:WasmGen, n:PNode) = 
   assert n.kind in {nkVarSection, nkLetSection, nkConstSection}, $n.kind
   # for each identDef, initialize the memory.
-  # We store the offset in linear memory ( ie Pointer ) in sym.loc 
-  # ( highly inefficient, but will do for now.)
+  # We store the offset in linear memory ( ie Pointer ) in sym.offset 
   for iddef in n.sons:
     w.genIdentDefs(iddef)
+
 #---------------putProc----------------------------------#
 proc genBody(w: WasmGen,params:Table[string,tuple[vt:ValueType,default:PNode]], n: PNode): WasmNode =
   result = newWANode(opGroup)
@@ -320,10 +307,11 @@ proc genBody(w: WasmGen,params:Table[string,tuple[vt:ValueType,default:PNode]], 
         res = w.gen(rhs)
   else:
     echo "# genBody ", $n.kind
-    echo treeToYaml n
+    #echo treeToYaml n
     result.sons.add(w.gen(n))
   if not res.isNil:
     result.sons.add(res)# the last value on the stack is the return value
+
 proc putProc(w:WasmGen, s:PSym) = 
   # FIXME: ensure body len > 0 | nil
   let 
@@ -331,21 +319,15 @@ proc putProc(w:WasmGen, s:PSym) =
     pragmas = s.ast[4]
     body = s.getBody()
   if sfUsed notin s.flags: return
-  #echo "NO----------------"
-  #echo treeToYaml n[0]
-  #echo typeToYaml fparams[1][1].typ.lastSon
-  #echo treeToYaml fparams
+
   var 
     params = initTable[string,tuple[vt:ValueType,default:PNode]]()
     res = mapType(fparams[0].typ)
-  
-  #echo "params....", treeToYaml fparams
 
   for par in fparams.sons[1..^1]:
     if par.kind == nkEmpty:
       params.add(s.name.s, (ValueType.None,nil))
     elif par.kind == nkIdentDefs:
-      #echo treeToYaml par
       if par.len > 3:
         for i in 0..<par.len-2: # eg a,b: int
           params.add(
@@ -353,7 +335,6 @@ proc putProc(w:WasmGen, s:PSym) =
             (mapType(par[^2].typ), if par[^1].kind!=nkEmpty: par[^1] else: nil ) # FIXME: detect type of param properly
           )
       else:
-        #echo treeToYaml par
         var 
           defaultVal : PNode
           typ: PType = par[1].typ
@@ -372,7 +353,6 @@ proc putProc(w:WasmGen, s:PSym) =
       )
     else:
       internalError("# unknown putProc par kind: " & $par.kind)
-      #echo treeToYaml par
     
   var
     fntype = newFnType(WasmType.Func)
@@ -381,7 +361,8 @@ proc putProc(w:WasmGen, s:PSym) =
   fntype.params = newSeq[ValueType]()
   for name,val in params:
     if not val.default.isNil:
-      echo "# TODO: need to init result"
+      echo "# TODO: need to store default value somewhere"#, treeToYaml val.default
+
     fntype.params.add(val.vt)
   if s.flags.contains(sfImportc):
     # it's an imported proc
@@ -410,7 +391,7 @@ proc putProc(w:WasmGen, s:PSym) =
     inc w.nextTotalFuncIdx
   elif s.flags.contains(sfExported):
     w.m.add(fntype)
-    echo s.name.s, " ", w.nextTotalFuncIdx
+    echo "# putProc ", s.name.s, " ", w.nextTotalFuncIdx
     w.m.add(w.nextTotalFuncIdx) # register the function in function section FIXME: export recalc
     w.m.add(newExportEntry(s.mangleName,ExternalKind.Function,w.nextFuncIdx))    
     #echo "# body\n ",treeToYaml body
@@ -435,29 +416,11 @@ proc process(w:WasmGen, n:PNode) =
   case n.kind:
   of nkVarSection,nkLetSection,nkConstSection:
     w.putVar(n)
-  # We are only interested in procs used by main module 
-  #of nkProcDef, nkMethodDef, nkConverterDef:
-  #  w.putProc(n)
-  #of nkIteratorDef:
-  #  discard # TODO:
   of nkCall,nkCommand,nkIfStmt:
     w.initExprs.add(gen(w, n))
   of nkBlockStmt:
     echo "# generating block stmt..."
     w.initExprs.add(gen(w, n))
-    #echo treeToYaml n
-    #[of nkTypeSection:
-      #echo $n.kind, "  ",n.len, "  ", $n[0].kind
-      for td in n.sons: w.process(td)
-    of nkTypeDef:
-      let s = n[0].sym
-      if s.typ.kind == tyObject and sfUsed in s.flags:
-        # Only object types ( or similar ) that are used in the module
-        # are of interest to us?
-        w.putTypeDesc(n)]#
-    # nkCommentStmt, nkIncludeStmt,
-    #  nkTemplateDef, nkPragma, nkEmpty:
-    #  discard #echo "# skipping ", $n.kind
   of nkStmtList:
     for node in n: w.process(node)
   of nkAsgn:
@@ -481,6 +444,7 @@ proc putStartSec(w: WasmGen) =
   w.m.start = newStartSec(w.nextFuncIdx) # register start as start
   inc w.nextFuncIdx
   inc w.nextTotalFuncIdx
+
 #------------------putInitFunc-------------------------#
 proc putInitFunc(w: WasmGen) =
   # Generate the init expression
@@ -495,6 +459,7 @@ proc putInitFunc(w: WasmGen) =
   echo "init :", w.nextTotalFuncIdx
   inc w.nextFuncIdx
   inc w.nextTotalFuncIdx
+
 #----------------------gen-----------------------------#
 proc getMagic(m:TMagic):WasmOpKind =
   case m:
@@ -539,7 +504,7 @@ proc genInfix(w:WasmGen, n:PNode):WasmNode =
       op, lhs, rhs
     )
   else:
-    echo "# genInfix"
+    internalError("# genInfix")
 
 proc genEcho(w:WasmGen,s:PSym) =
   if w.generatedProcs.hasKey("echo"): return
@@ -625,7 +590,6 @@ proc genDec(w:WasmGen, s:PSym) =
   inc w.nextTotalFuncIdx
 
 proc genNew(w: WasmGen, s:PSym) =
-  # kind of like a simplified malloc?
   echo "# genNew"
   # load bottom memory pointer
   # add `size` to it
@@ -665,7 +629,6 @@ proc genNew(w: WasmGen, s:PSym) =
   inc w.nextTotalFuncIdx
 
 proc genNewSeq(w: WasmGen, s: PSym, setLen: bool = false) =
-  # kind of like a simplified malloc?
   echo "# genNewSeq"
   # load bottom memory pointer
   # add `size` to it
@@ -710,7 +673,7 @@ proc genNewSeq(w: WasmGen, s: PSym, setLen: bool = false) =
 proc genReset(w: WasmGen, s:PSym) =
   echo "# genReset"
   w.m.add(  # Take an I32 `ptr` and a I32 `typesize`
-            # while i < size: ptr+i = "\0"
+            # while i < typesize: ptr+i = "\0"
     newFnType(WasmType.Func, ValueType.I32,ValueType.I32)
   )
 
@@ -799,9 +762,6 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     #echo treeToYaml n
     result = newUnaryOp(itEqz32, w.gen(n[1]))
   of mNew:
-    #echo "-- mNew --"
-    #echo treeToYaml n
-    #echo typeToYaml n[1].typ.lastSon
     if needsGen: genNew(w,s)
     let 
       size = if n[1].typ.lastSon.size<4: 4 else: n[1].typ.lastSon.size.int
@@ -814,7 +774,6 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     )
   of mReset:
     echo "# mReset"
-    #echo treeToYaml n
     if needsGen: genReset(w,s)
     let 
       size = if n[1].typ.lastSon.size<4: 4 else: n[1].typ.lastSon.size.int
@@ -829,8 +788,6 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     result = newBinaryOp( ibSub32, args[0], args[1] )
   of mNewSeq, mNewSeqOfCap:
     echo "-- mNewSeq --"
-    #echo treeToYaml n
-    #echo typeToYaml n[1].typ.lastSon
     if needsGen: genNewSeq(w,s)
     let 
       size = if n[1].typ.lastSon.size<4: 4 else: n[1].typ.lastSon.size.int
@@ -845,26 +802,7 @@ proc useMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     )
   else:
     debug s
-    internalError("# missing magic " & $s.name.s & " " & $s.magic)
-    
-
-proc getObjFieldOffset(obj: PSym, field:PSym): int =
-  echo "o genNewOffset ", obj.name.s," ", obj.offset
-  echo "f genNewOffset ", field.name.s," ", field.offset
-  
-  # Get the offset by adding typ.size until field == 
-  # The zero is at the start of the object.
-  #echo typeToYaml objcstr.typ
-  #echo treeToYaml objcstr
-  #result = obj.crazyLoc.int
-  let objType = if obj.typ.kind in {tyRef, tyPtr, tyVar}: obj.typ[0] else: obj.typ
-  #echo obj.typ.len, typeToYaml obj.typ
-  for objf in objType.n:
-    #echo "objf ", objf.typ.size.int
-    if objf.sym == field: break
-      #when defined debug: echo objf.sym.name.s, "  ", objf.sym.typ.size
-      #when defined debug: echo result
-    result += objf.typ.size.int      
+    internalError("# missing magic " & $s.name.s & " " & $s.magic)  
 
 proc getLoadKind(typ:PType):WasmOpKind =
   case typ.skipTypes(abstractVarRange).kind:
@@ -902,7 +840,6 @@ proc accessAux(n: PNode, offset: WasmNode): WasmNode =
       0'i32, 1'i32,
       offset
     )
-    
 
 proc genFieldAccess(w:WasmGen, n: PNode): WasmNode =
   #TODO: rework to have only a newLoad( loadKind, fieldOffset, 1, objLoc )
@@ -925,7 +862,7 @@ proc genArrayAccess(w:WasmGen, n: PNode): WasmNode =
   #echo treeToYaml n
   case n[1].kind:
   of nkIntLit:
-    echo treeToYaml n
+    #echo treeToYaml n
     if n[0].typ.kind == tySequence:
       result = n.accessAux(
         newBinaryOp(
@@ -1065,26 +1002,6 @@ proc genRaiseStmt(w: WasmGen, n: PNode): WasmNode =
   echo "#genRaiseStmt \n", treeToYaml n
   # TODO:
   result = newWANode(woUnreachable) # Trap
-  #[w.m.add( # Take an I32 `x` and I32 `y` and return their sum
-    newFnType(ValueType.I32, WasmType.Func, ValueType.I32, ValueType.I32)
-  )
-  w.m.add(
-    newFnBody(
-      newBinaryOp(
-        ibAdd32,
-        newGet(woGetLocal, 0),
-        newGet(woGetLocal, 1)
-      )
-    )
-  )
-
-  w.m.add(w.nextTotalFuncIdx)
-
-  w.generatedProcs.add(s.mangleName,(w.nextFuncIdx.int,false))
-  inc w.nextFuncIdx
-  inc w.nextTotalFuncIdx]#
-
-
 
 proc putTypeInfo(w:WasmGen, n:PNode) =
   #echo treeToYaml n
@@ -1104,7 +1021,7 @@ proc putResultVar(w:WasmGen, n:PNode) =
   #echo treeToYaml n
   let s = n.sym
   # what = n.sym.ast[0]
-  echo "storing: ", s.name.s, "at ", w.memOffset
+  echo "# putResultVar ", s.name.s, "at ", w.memOffset
   let storeResultVar = newStore(
     memStoreI32,
     newConst(0'i32), w.memOffset, newConst(0'i32)
@@ -1115,7 +1032,7 @@ proc putResultVar(w:WasmGen, n:PNode) =
   
 
 proc gen(w: WasmGen, n: PNode): WasmNode =
-  echo $n.kind
+  echo "# gen ", $n.kind
   case n.kind:
   of nkNilLit:
     result = newConst(0'i32)
@@ -1129,24 +1046,21 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     case n.sym.kind:
     of skParam:
       # Symbol is a param in a call
-      echo "passed as param ", $n.sym.name.s, " pos:", n.sym.position
+      echo "# passed as param ", $n.sym.name.s, " pos:", n.sym.position
       return newGet(woGetLocal, n.sym.position)
     of skType:
       # Symbol is a type
       if not w.generatedTypeInfos.hasKey(mangleName(n.sym)):
-        echo "generating skType"
+        echo "# generating skType"
         w.putTypeInfo(n)
     of skResult:
       #echo "#skResult"
       w.putResultVar(n)
     else:
-      echo "discard sk: " & $n.sym.kind & " name: " & n.sym.name.s
+      echo "# discard sk: " & $n.sym.kind & " name: " & n.sym.name.s
     if n.typ.skipTypes(abstractVarRange).kind in passedAsBackendPtr: #needsDeref
       when defined debug: 
         echo "# passedAsPtr ", n.typ.kind," name: ", n.sym.name.s 
-        #echo treeToYaml n
-        debug n.sym
-        echo "# -> loc: ",n.sym.crazyLoc
       result = newConst(n.sym.crazyLoc) # WTF this is insane
     else:
       when defined debug: echo "# nkSym ", n.sym.name.s, " not passedAsPtr ", n.typ.kind
@@ -1155,19 +1069,12 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
         n.sym.crazyLoc, 1'i32,
         newConst(0'i32)
       )
-  #of nkStrLit:
-  #  # store the literal (in heap?)
-  #  result = newConst(w.memOffset) # result points to literal    
-  #  w.initExprs.add(newStore(memStoreI32, n.strVal, w.memOffset))
   of nkBracket:
     result = newWANode(opGroup)
     for son in n.sons:
       add result.sons, w.gen(son)
   of nkCall,nkCommand,nkHiddenCallConv, nkPrefix:
     let s = n[namePos].sym
-    #echo "debugging ", s.name.s
-    #debug s
-    #echo treeToYaml n
     if s.magic != mNone:
       result = w.useMagic(s, n)
     else:
@@ -1223,6 +1130,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
   else:
     internalError("# no gen yet " & $n.kind)
     #echo treeToYaml n
+
 #-------------putHeapPtr-------------------------------#
 proc putHeapPtr(w:WasmGen) =
   w.m.add(newDataSeg(
@@ -1230,6 +1138,7 @@ proc putHeapPtr(w:WasmGen) =
     heapPtrLoc, # heaptr is stored in bytes [4..12) 
     w.memOffset.unsignedLEB128)
   )
+
 #-------------linker-----------------------------------#
 proc linkPass(mainModuleFile:string, w:WasmGen) =
   echo "linking..."
@@ -1241,7 +1150,6 @@ proc linkPass(mainModuleFile:string, w:WasmGen) =
     writefile(mainModuleFile.changeFileExt("html"), generateLoader(w.s.name.s))
 
 #------------------myPass------------------------------#
-
 proc myProcess(b: PPassContext, n: PNode): PNode =
   #echo "processing ", $n.kind, " from ", n.info.fileIndex.toFilename
   if passes.skipCodegen(n): return n
@@ -1284,13 +1192,3 @@ proc myOpen(graph: ModuleGraph; s: PSym; cache: IdentCache): PPassContext =
   echo "# end myOpen ",s.info.fileIndex.toFilename," s.name: ",$s.name.s
 
 const WasmGenPass* = makePass(myOpen, myOpenCached, myProcess, myClose)
-
-# TODO: do not generate procs if they come from a different module (checking sym.info?)
-
-# TODO: WasmLinkPass that links modules together ( takes a list of WasmGen? )
-# while moremodules:
-#   check imports in table[module, symbol]
-#   if imports.len>0: genImports
-#   add imports to table[module, symbol]
-#   link in js ( importObj: <name>: <name>.exports ) or something similar
-#generate html file

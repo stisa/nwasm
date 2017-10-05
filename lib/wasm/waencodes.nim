@@ -614,48 +614,30 @@ proc encode*(m:Module):string =
   result = encode(m.magic.int32) & encode(m.version.int32)
   if not m.types.isnil and m.types.entries.len>0: #1
     add result, encode(m.types)
-  else:
-    echo "type sec is nil"
   if not m.imports.isnil and m.imports.entries.len>0: #2
     add result, encode(m.imports)
-  else:
-    echo "import sec is nil"
   if not m.functions.isnil and m.functions.entries.len>0: #3
     add result, encode(m.functions)
-  else:
-    echo "func sec is nil"
   if not m.tables.isnil and m.tables.entries.len>0: #4
     add result, encode(m.tables)
-  else:
-    echo "table sec is nil"
   if not m.memory.isnil and m.memory.entries.len>0: #5
     add result, encode(m.memory)
-  else:
-    echo "memory sec is nil"
   #if not m.globals.isnil: #6 TODO: when mvp allows exporting mutable global vars
   #  add result, encode(m.globals)
   #else:
   #  echo "global sec is nil"
   if not m.exports.isNil and m.exports.entries.len>0: #7
     add result, encode(m.exports)
-  else:
-    echo "export sec is nil"
   if not m.start.isnil: #8
     add result, encode(m.start)
-  else:
-    echo "start sec is nil"
   #if not m.elements.isnil: #9
   #  add result, encode(m.elements)
   #else:
   #  echo "element sec is nil"
   if not m.codes.isnil and m.codes.entries.len>0: #10
     add result, encode(m.codes)
-  else:
-    echo "code sec is nil"
   if not m.datas.isnil and m.datas.entries.len>0: #11
       add result, encode(m.datas)
-  else:
-    echo "data sec is nil"
   if not m.custom.isnil: #4
     echo "custom sec is nil"
   
