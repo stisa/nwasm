@@ -1,6 +1,6 @@
 from math import log2,ceil
 
-proc signedLEB128* (value:int32):string =
+proc signedLEB128* (value:int32):seq[byte] =
   # TODO: fix signed leb for value < -128
   var 
     val = value
@@ -26,10 +26,10 @@ proc signedLEB128* (value:int32):string =
         more = false
     else:
         b = b or 0x80
-    if result.isnil: result = $chr(b)
-    else: add result, chr(b)
+    if result.isnil: result = @[b.byte]
+    else: add result, b.byte
 
-proc unsignedLEB128* (value:int32, padding:int=0):string =
+proc unsignedLEB128* (value:int32, padding:int=0):seq[byte] =
   var
     val = value
     b = 0
@@ -39,7 +39,7 @@ proc unsignedLEB128* (value:int32, padding:int=0):string =
   val = val shr 7
   if val != 0 or pad > 0:
     b = b or 128
-  result = $chr(b)
+  result = @[b.byte]
   dec pad
   
   while val != 0 or pad > -1:
@@ -47,26 +47,5 @@ proc unsignedLEB128* (value:int32, padding:int=0):string =
     val = val shr 7
     if val != 0 or padding > 0:
       b = b or 128
-    add result, chr(b)
+    add result, b.byte
     dec pad
-
-proc toLEB128_S*(val:string):string =
-  result = ""
-  for el in val:
-    add result, el.int32.signedLEB128
-
-proc toLEB128*(val:string):string =
-  result = ""
-  for el in val:
-    add result, el.int32.unsignedLEB128
-
-proc toBytes*(val:SomeNumber):string =
-  # Maybe something less unsafe might be a good idea
-  result = ""
-  result.setLen(sizeof(val))
-
-  copymem(
-      (pointer)addr result[0], 
-      (pointer)unsafeaddr(val),
-      sizeof(val)
-  )

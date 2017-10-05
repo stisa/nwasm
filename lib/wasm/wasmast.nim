@@ -1,50 +1,16 @@
-type 
-  SecCode* {.pure.} = enum
-    Custom
-    Type # Function signature declarations
-    Import # Import declarations
-    Function # Function declarations
-    Table # Indirect function table and other tables
-    Memory # Memory attributes
-    Global # Global declarations
-    Export # Exports
-    Start # Start function declaration
-    Element # Elements section
-    Code # Function bodies (code)
-    Data # Data segments
+type
+  WasmValueType* = enum
+    vtNone,
+    vtF64, vtF32
+    vtI64, vtI32,
+    ltPseudo
 
-  WasmType* {.pure.} = enum
-    Pseudo #(i.e., the byte 0x40) pseudo type for representing an empty block_type
-    Func #(i.e., the byte 0x60) func
-    AnyFunc #(i.e., the byte 0x70) anyfunc
-    F64 #(i.e., the byte 0x7c) f64
-    F32  #(i.e., the byte 0x7d) f32
-    I64 #(i.e., the byte 0x7e) i64
-    I32 #(i.e., the byte 0x7f) i32
-
-  ValueType* {.pure.} = enum
-    None
-    F64
-    F32
-    I64
-    I32
-
-  BlockType* {.pure.} = enum
-    Pseudo
-    F64
-    F32
-    I64
-    I32
-
-  ElemType* {.pure.} = enum
-    AnyFunc = -0x10
-
-  ExternalKind *{.pure.} = enum
+  WasmExternalKind* = enum
     ## A single-byte unsigned integer indicating the kind of definition being imported or defined:
-    Function ## indicating a Function import or definition
-    Table  ## indicating a Table import or definition
-    Memory ## indicating a Memory import or definition
-    Global ## indicating a Global import or definition
+    ekFunction ## indicating a Function import or definition
+    ekTable  ## indicating a Table import or definition
+    ekMemory ## indicating a Memory import or definition
+    ekGlobal ## indicating a Global import or definition
 
   WasmOpKind* = enum
     # ControlFlow
@@ -65,7 +31,7 @@ type
     memLoadI32, memLoadI64, memLoadF32, memLoadF64,
     memLoad8S_I32, memLoad8U_I32, memLoad16S_I32, memLoad16U_I32,
     memLoad8S_I64, memLoad8U_I64, memLoad16S_I64, memLoad16U_I64,
-    memLoad132S_I64, memLoad32U_I64,
+    memLoad32S_I64, memLoad32U_I64,
     #  Store
     memStoreI32, memStoreI64, memStoreF32, memStoreF64,
     memStore8_I32, memStore16_I32, memStore8_I64, memStore16_I64,
@@ -134,16 +100,15 @@ type
     #  Rel
     frEq64, frNe64, frLt64, frGt64, frLe64, frGe64,
 
-    opGroup # this is used to make a group of ops, like those required for storing a string of len>4bytes
-            # it should be ignored by the encoder.
+    opList 
+  
 const 
   MemLoad* = {
     memLoadI32, memLoadI64, memLoadF32, memLoadF64,
     memLoad8S_I32, memLoad8U_I32, memLoad16S_I32, memLoad16U_I32,
     memLoad8S_I64, memLoad8U_I64, memLoad16S_I64, memLoad16U_I64,
-    memLoad132S_I64, memLoad32U_I64
+    memLoad32S_I64, memLoad32U_I64
   }
-#  Store
   MemStore* = {
     memStoreI32, memStoreI64, memStoreF32, memStoreF64,
     memStore8_I32, memStore16_I32, memStore8_I64, memStore16_I64,
@@ -151,6 +116,39 @@ const
   }
   Consts* = {constI32, constI64, constF32, constF64}
 
+type
+  WasmNode* = ref object
+    case kind*: WasmOpKind
+    of woBlock, woLoop, woIf:
+      sig*: WasmValueType # vtNone === Pseudo
+    of woBr, woBrIf:
+      relativeDepth*: Natural
+    of woBrTable:
+      targetTable*: seq[Natural]
+      default*: Natural
+    of woCall:
+      funcIndex* : Natural
+      isImport* : bool
+    of woCallIndirect:
+      typeIndex*: Natural
+      reserved*: Natural # 0 in MVP
+    of woGetLocal, woSetLocal, woTeeLocal, woGetGlobal, woSetGlobal:
+      index*: Natural
+    of MemLoad, MemStore:
+      align*: Natural # log2(alignment)
+      offset*: Natural
+    of memSize, memGrow:
+      memReserved*: Natural
+    of constI32, constI64:
+      intVal*: BiggestInt
+    of constF32, constF64:
+      floatVal*: BiggestFloat
+    else:
+      discard
+    sons*: seq[WasmNode]  # If kind == opList, the actual operations are stored here.
+                    # Otherwise this olds args ( eg for binaryOp etc )
+
+const
   UnaryOp* = {
     cvWrapI32_I64, cvTruncI32S_F32, cvTruncI32U_F32,
     cvTruncI32S_F64, cvTruncI32U_F64, 
@@ -202,3 +200,23 @@ const
     #  Rel
     frEq64, frNe64, frLt64, frGt64, frLe64, frGe64
   }
+
+proc a*(op:WasmNode):WasmNode = 
+  assert(op.sons.len>0, $op.sons.len)
+  op.sons[0]
+
+proc b*(op:WasmNode):WasmNode =
+  assert(op.sons.len>1, $op.sons.len)
+  op.sons[1]
+  
+proc `a=`*(op:WasmNode,val:WasmNode) = 
+  if op.sons.len>0:
+    op.sons[0] = val
+  else:
+    op.sons.add(val)
+proc `b=`*(op:WasmNode,val:WasmNode) =
+  assert(op.sons.len>0, $op.sons.len)
+  if op.sons.len>1:
+    op.sons[1] = val
+  else:
+    op.sons.add(val)

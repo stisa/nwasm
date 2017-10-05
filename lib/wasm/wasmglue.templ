@@ -1,13 +1,6 @@
 #? stdtmpl | standard
 #proc generateJSGlue(name: string): string =
 #  result = ""
-function deref(ptr){
-    // takes a ptr into memory, reads the first 4 bytes pointed to
-    // TODO: pass a second value ( int32? ) that defines the kind
-    // of value pointed to.
-    var arr = $$${name}.memory.slice(ptr,ptr+4)
-    return (new Uint32Array(arr.buffer))[0]
-}
 function toJSStr(ptr){
     // takes a ptr into memory, reads the first 4 bytes to determine
     // the length of the string, then return the string
@@ -41,22 +34,12 @@ function toJSStr(ptr){
     return (nonAsciiPart === null) ?
         asciiPart : asciiPart + decodeURIComponent(nonAsciiPart.join(""));
 }
-function printInt(ptri){
-    console.log((new Uint32Array($$${name}.memory.slice(ptri,ptri+4).buffer))[0])
-}
 function rawEcho(){
     var buf = "";
     for (var i = 0; i < arguments.length; ++i) {
         buf += toJSStr(arguments[i]);
     }
     console.log(buf);
-    //console.log(toJSStr(strptr));
-}
-function heapPtr(){
-    var sliced = $$${name}.memory.slice(3,11)
-    // currently js has poor support for i64
-    // extract up to i32
-    return (new Uint32Array(sliced.buffer))[0]
 }
 #end proc
 #
@@ -75,9 +58,6 @@ function heapPtr(){
         <script>
             var nimWasmImports = {
                 glue: {
-                    printInt: function(arg){
-                        printInt(arg)
-                    },
                     log: function(arg){
                         console.log(arg)
                     },
@@ -114,9 +94,6 @@ var root = path.dirname(require.main.filename);
 
 var nimWasmImports = {
     glue: {
-        printInt: function(arg){
-            printInt(arg)
-        },
         log: function(arg){
             console.log(arg)
         },
