@@ -111,3 +111,7 @@ proc newIf*(cond:WasmNode, then:WasmNode #[, other:WasmNode=nil]#):WasmNode =
   #  ifstmt.sons.add(newElse(other))
   #ifstmt.sons.add(newEnd())
   #result.sons.add(ifstmt)
+
+proc newOpList*(ops: varargs[WasmNode]): WasmNode =
+  result = newWANode(opList)
+  result.sons = @ops

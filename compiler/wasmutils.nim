@@ -34,6 +34,9 @@ proc mapType*(tt:PType):WasmValueType =
   else:
     internalError("unmapped type kind " & $t.kind)
 
+proc alignTo4*(n:Natural): Natural = (n + 3) and not(0x03)
+  # Next multiple of 4 or return n if n is already a multiple of 4
+
 proc mangle*(name: string): string =
   result = newStringOfCap(name.len)
   var start = 0

@@ -133,9 +133,9 @@ proc render(n: WasmNode, indlv = 0): string =
 proc render*(i: WAsmImport, indlv = 0): string =
   result = """{
   "module": "$1", "name": "$2",
-  "id": $3, "kind": $4,
+  "id": $3, "kind": $4, "exported": $6,
   "type": $5
-}""" % [i.module, i.name, $i.id, render(i.kind), render(i.typ)]
+}""" % [i.module, i.name, $i.id, render(i.kind), render(i.typ), $i.exported]
   result = result.indent(indlv)
 
 proc render*(e: WAsmExport, indlv = 0): string =
@@ -156,16 +156,16 @@ proc render*(d: WAsmData, indlv = 0): string =
 proc render*(f: WAsmFunction, indlv = 0): string =
   result = """{
   "name": "$1", "id": $2, "hoistedIndex": $6,
-  "type": $3, "locals": [$4],
+  "type": $3, "locals": [$4], "exported": $7,
   "body": [
 $5
   ]
 }""" % [f.name, $f.id, render(f.typ), render(f.locals), 
-  render(f.body, indlv), $f.hoistedIndex]
+  render(f.body, indlv), $f.hoistedIndex, $f.exported]
 
   result = result.indent(indlv)
 
-proc render(m: WAsmModule, indlv = 0): string = 
+proc render*(m: WAsmModule, indlv = 0): string = 
   var
     imports: string = ""
     functions: string = ""

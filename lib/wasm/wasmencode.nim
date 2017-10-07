@@ -416,7 +416,7 @@ proc encode(functions: seq[WasmFunction]): tuple[num: int, ft: seq[byte], f: seq
     result.ft.add(enc.t)
     result.f.add(enc.f)
 
-proc encode(m: WAsmModule): seq[byte] =
+proc encode*(m: WAsmModule): seq[byte] =
   #result = newSeq[byte]()
   # magic=0x6d736100, version= 0x00000001
   # TODO: at least version should be settable, maybe property of WasmModule.
@@ -490,7 +490,7 @@ proc encode(m: WAsmModule): seq[byte] =
   result.add(dataNum.int32.unsignedLeb128)
   result.add(data)
 
-proc writeTo(m: seq[byte], name:string) =
+proc writeTo*(m: seq[byte], name:string) =
   assert(not m.isNil)
   var res = newString(m.len)
   copymem(
