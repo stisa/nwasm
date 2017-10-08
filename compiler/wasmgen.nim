@@ -136,15 +136,12 @@ proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
       )
     )
   of nkObjConstr:
-    echo treeToYaml n
-    echo typ.size
-    #echo n[0].sym.name.s & " " & $n[0].sym.offset
-    #dataseg.setLen(typ.size)
     var tmpMemIdx = memIndex
     for i, colonexpr in n:
-      if i == 0: continue
-      let es = colonexpr[0].sym
-      let t = colonexpr[1].typ
+      if i == 0: continue # type symbol
+      let 
+        es = colonexpr[0].sym
+        t = colonexpr[1].typ
       tmpMemIdx = memIndex+es.offset
       w.store(es, t, colonexpr[1], tmpMemIdx)
   of nkNilLit:
@@ -352,7 +349,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     for iddef in n.sons:
       w.genIdentDefs(iddef)
   of nkDerefExpr, nkHiddenDeref:
-    echo treeToYaml n
+    #echo treeToYaml n
     var loadKind : WasmOpKind = memLoadI32
     if n.typ.kind in {tyFloat,tyFloat64}:
       loadKind = memLoadF64
@@ -361,6 +358,24 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     result = newLoad(loadKind, 0, 1, 
       newLoad(memLoadI32, 0, 1, w.genSymLoc(n[0].sym))
     )
+  of nkDotExpr:
+    # a.b
+    echo treeToYaml n
+    var loadKind : WasmOpKind = memLoadI32
+    if n.typ.kind in {tyFloat,tyFloat64}:
+      loadKind = memLoadF64
+    elif n.typ.kind == tyFloat32:
+      loadKind = memLoadF32
+    if n[0].kind == nkSym:
+      result = newLoad(loadKind, 0, 1, 
+        newBinaryOp(ibAdd32, w.genSymLoc(n[0].sym), newConst(n[1].sym.offset))
+      )
+    elif n[0].kind in {nkDerefExpr, nkHiddenDeref}:
+      result = newLoad(loadKind, 0, 1, 
+        newBinaryOp(ibAdd32, newLoad(memLoadI32, 0, 1, w.genSymLoc(n[0][0].sym)), newConst(n[1].sym.offset))
+      )
+    else:
+      internalError("nkDotExpr n[0] kind: " & $n[0].kind) 
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)

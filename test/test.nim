@@ -8,9 +8,10 @@ type A = object
 var x = A(c: 1.2)
 
 var y = A(b:13, c: 1.4)
-
-#log(x.c) # == 1.2)
-#log(y.b) # == 13)
+var z = addr x
+log(x.c) # == 1.2)
+log(y.b) # == 13)
+log(z.c)
 #[
 type A = ref object
   id: int
