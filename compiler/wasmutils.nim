@@ -23,9 +23,11 @@ proc mapType*(tt:PType):WasmValueType =
   let t = if not tt.isNil: tt.skipTypes(abstractVarRange) else: tt
   if t.isNil: return vtNone
   case t.kind:
-  of tyBool,tyInt,tyInt32,tyUInt32,tyUInt,tyUInt8,tyInt16,
-    tyString, tyPointer, tySequence, tyArray, tyProc,
-    tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
+  #of tyBool,tyInt,tyInt32,tyUInt32,tyUInt,tyUInt8,tyInt16,
+  #  tyString, tyPointer, tySequence, tyArray, tyProc,
+  #  tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
+  of tyBool,tyChar, tyInt..tyInt32, tyUint..tyUint32,
+    tyString, tyPtr:
     result = vtI32
   of tyFloat32:
     result = vtF32

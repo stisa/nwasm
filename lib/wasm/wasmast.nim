@@ -100,7 +100,7 @@ type
     #  Rel
     frEq64, frNe64, frLt64, frGt64, frLe64, frGe64,
 
-    opList 
+    opList, constUI32, constUI64
   
 const 
   MemLoad* = {
@@ -114,7 +114,7 @@ const
     memStore8_I32, memStore16_I32, memStore8_I64, memStore16_I64,
     memStore32_I64
   }
-  Consts* = {constI32, constI64, constF32, constF64}
+  Consts* = {constI32, constI64, constUI32, constUI64, constF32, constF64}
 
 type
   WasmNode* = ref object
@@ -141,6 +141,8 @@ type
       memReserved*: Natural
     of constI32, constI64:
       intVal*: BiggestInt
+    of constUI32, constUI64:
+      uintVal*: BiggestUInt
     of constF32, constF64:
       floatVal*: BiggestFloat
     else:

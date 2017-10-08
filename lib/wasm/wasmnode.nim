@@ -41,32 +41,26 @@ proc newSet*(op:WasmOpKind,idx:int, what:WasmNode):WasmNode =
 proc newReturn*(what:WasmNode): WasmNode {.inline.}=
   newUnaryOp(woReturn, what)
 
-proc newConst*[T:int32|int64|float32|float64](val:T):WasmNode =
-  when T is int32 or T is int:
-    result = newWANode(constI32)
-    result.intVal = val
-  elif T is int64:
+proc newConst*(val:SomeSignedInt):WasmNode =
+  when val is int64:
     result = newWANode(constI64)
-    result.intVal = val
-  elif T is float32:
-    result = newWANode(constF32)
-    result.floatVal = val
-  elif T is float64:
-    result = newWANode(constF64)
-    result.floatVal = val
   else:
-    # other branches shouldn't be possible
-    assert(false,"Impossible type")
+    result = newWANode(constI32)
+  result.intVal = val
 
-  #[when T is SomeUnsignedInt:
-    result.value = val.int32.unsignedLeb128
-  elif T is SomeSignedInt:
-    result.value = val.int32.signedLeb128
-  elif T is bytes:
-    result.value = val
+proc newConst*(val:SomeUnsignedInt):WasmNode =
+  when val is uint64:
+    result = newWANode(constUI64)
   else:
-    result.value = toBytes(val)
-  ]#
+    result = newWANode(constUI32)
+  result.uintVal = val
+
+proc newConst*(val:SomeReal):WasmNode =
+  when val is float32:
+    result = newWANode(constF32)
+  else:
+    result = newWANode(constF64)
+  result.floatVal = val
 
 proc newStore*(kind:WasmOpKind, what: varargs[WasmNode],offset: int32,index:WasmNode=newConst(0'i32)): WasmNode =
   assert kind in MemStore, $kind

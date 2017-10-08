@@ -1,6 +1,6 @@
 from math import log2,ceil
 
-proc signedLEB128* (value:int32):seq[byte] =
+proc signedLEB128* (value:int32|uint32):seq[byte] =
   # TODO: fix signed leb for value < -128
   var 
     val = value
@@ -29,7 +29,7 @@ proc signedLEB128* (value:int32):seq[byte] =
     if result.isnil: result = @[b.byte]
     else: add result, b.byte
 
-proc unsignedLEB128* (value:int32, padding:int=0):seq[byte] =
+proc unsignedLEB128* (value:int32|uint32, padding:int=0):seq[byte] =
   var
     val = value
     b = 0

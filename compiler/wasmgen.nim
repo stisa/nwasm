@@ -46,7 +46,7 @@ proc newWasmGen(s:PSym): WasmGen =
 const 
   passedAsBackendPtr = {tyVar, tyObject}
   heapPtrLoc = 4'i32
-
+  wasmPtrSize = 4 # FIXME
 var genCtx : WasmGen
 
 proc gen(w: WasmGen, n: PNode):WasmNode
@@ -86,6 +86,78 @@ proc location(s:PSym):int32 =
   if s.offset<0:
     internalError("uninitialized offset: " & s.name.s)
   result = s.offset.int32 
+proc genSymLoc(w: WasmGen, s: PSym): WasmNode =
+  let t = s.typ.skipTypes(abstractVarRange)
+  #case t.kind:
+  #of tyString, tyRef, tyPtr, tyPointer:
+  #  result = newLoad(memLoadI32, 0, 1, newConst(s.offset.int32))
+  #else:
+  result = newConst(s.offset.int32)
+
+proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
+  # a var section stores its data in `data` or has an
+  # initialization expr, so no node is returned.
+  #echo treeToYaml n
+  var dataseg: seq[byte] = newSeq[byte]()
+  case n.kind:
+  of nkEmpty:
+    # eg. var s: string
+    # produces 4 nil bytes where the string ptr goes
+    dataseg.setLen(typ.size)
+  of nkInt64Lit, nkUInt64Lit:
+    internalError("Wasm MVP integers are 32bit only")
+  of nkCharLit, nkIntLit, nkInt8Lit,
+    nkInt16Lit, nkInt32Lit:
+    if typ.kind in tyUInt..tyUint32:
+      dataseg = n.intVal.uint32.toBytes
+    else:
+      dataseg = n.intVal.int32.toBytes
+  of nkUIntLit, nkUInt8Lit, nkUInt16Lit, nkUInt32Lit:
+    dataseg = n.intVal.uint32.toBytes
+  of nkFloatLit, nkFloat64Lit: #, nkFloat128Lit:
+    if typ.kind == tyFloat32:
+      dataseg = n.floatVal.float32.toBytes
+    else:
+      dataseg = n.floatVal.float64.toBytes
+  of nkFloat32Lit:
+    dataseg = n.floatVal.float32.toBytes
+  of nkStrLit, nkRStrLit, nkTripleStrLit:
+    # |ptr|len|strdata|
+    # |4b |4b |?b     |
+    #     ^ptr points here
+    dataseg = (memIndex+wasmPtrSize).uint32.toBytes & n.strVal.len.uint32.toBytes & n.strVal.toBytes
+  of nkAddr:
+    dataseg.setLen(wasmPtrSize)
+    w.initExprs.add(
+      newStore(
+        memStoreI32,
+        w.genSymLoc(n[0].sym),
+        0'i32, newConst(memIndex)
+      )
+    )
+  of nkObjConstr:
+    echo treeToYaml n
+    echo typ.size
+    #echo n[0].sym.name.s & " " & $n[0].sym.offset
+    #dataseg.setLen(typ.size)
+    var tmpMemIdx = memIndex
+    for i, colonexpr in n:
+      if i == 0: continue
+      let es = colonexpr[0].sym
+      let t = colonexpr[1].typ
+      tmpMemIdx = memIndex+es.offset
+      w.store(es, t, colonexpr[1], tmpMemIdx)
+  of nkNilLit:
+    debug s
+  of nkExprColonExpr, nkInfix, nkBracket, nkCall:
+    internalError("TODO: genIdentDefs: initialize")
+  else:
+    internalError("genIdentDefs: unhandled identdef kind: " & $n.kind)
+  if not dataseg.isNil and dataseg.len > 0:
+    w.m.data.add(newData(memIndex, dataseg))
+    memIndex = ( memIndex + dataseg.len ).alignTo4
+  else:
+    memIndex = ( memIndex + typ.size ).alignTo4
 
 proc genIdentDefs(w: WasmGen, n: PNode) =
   # a var section stores its data in `data` or has an
@@ -93,37 +165,13 @@ proc genIdentDefs(w: WasmGen, n: PNode) =
   #echo treeToYaml n
   let
     s = n[namePos].sym
-    typ = if n[1].typ != nil: n[1].typ.skipTypes({tyGenericInst}) else: n[2].typ.skipTypes({tyGenericInst})
+    typ = if n[1].typ != nil: n[1].typ.skipTypes({tyGenericInst, tyTypeDesc}) else: n[2].typ.skipTypes({tyGenericInst})
   
   s.offset = w.nextMemIdx # initialize the position in memory of the symbol
   
-  assert(typ.kind in ConcreteTypes, $typ.kind)
-  var dataseg: seq[byte] = newSeq[byte]()
-  case n[2].kind:
-  of nkEmpty:
-    dataseg.setLen(typ.size)
-  of nkInt64Lit, nkUInt64Lit:
-    internalError("Wasm MVP integers are 32bit only")
-
-  of nkCharLit, nkIntLit, nkInt8Lit,
-    nkInt16Lit, nkInt32Lit:
-    dataseg = n[2].intVal.int32.toBytes
-  of nkUIntLit, nkUInt8Lit, nkUInt16Lit, nkUInt32Lit:
-    dataseg = n[2].intVal.uint32.toBytes
-  of nkFloatLit, nkFloat32Lit, nkFloat64Lit, nkFloat128Lit:
-    dataseg = n[2].floatVal.toBytes
-  of nkStrLit, nkRStrLit, nkTripleStrLit:
-    internalError("TODO: genIdentDefs: string literals")
-  of nkNilLit:
-    debug s
-  of nkExprColonExpr, nkInfix, nkBracket, nkCall:
-    internalError("TODO: genIdentDefs: initialize")
-  else:
-    internalError("genIdentDefs: unhandled identdef kind: " & $n[2].kind)
-
-  w.m.data.add(newData(w.nextMemIdx, dataseg))
-
-  w.nextMemIdx = ( w.nextMemIdx + dataseg.len ).alignTo4
+  assert(typ.kind in ConcreteTypes, $typ.kind & "\n" & $treeToYaml(n))
+  
+  w.store(s, typ, n[2], w.nextMemIdx)
 
 proc genBody(w: WasmGen,params:Table[string,tuple[vt:WasmValueType,default:PNode]], n: PNode): WasmNode =
   result = newWANode(opList)
@@ -230,48 +278,89 @@ proc genProc(w: WasmGen, s: PSym) =
   else:
     internalError("# genProc generating unused proc " & s.name.s)
 
-proc genSymLoc(w: WasmGen, s: PSym): WasmNode =
-  let t = s.typ.skipTypes(abstractVarRange)
-  case t.kind:
-  of tyString, tyRef, tyPtr, tyPointer:
-    result = newLoad(memLoadI32, 0, 1, newConst(s.offset.int32))
-  else:
-    result = newConst(s.offset.int32)
+proc getMagicOp(m: TMagic): WasmOpKind =
+  result = case m:
+  of mAddI, mAddU: ibAdd32
+  of mSubI, mSubU: ibSub32
+  of mMulI, mMulU: ibMul32
+  of mDivI: ibDivS32
+  of mDivU: ibDivU32
+  of mModI: ibRemS32
+  of mModU: ibRemU32
+  of mAnd: ibAnd32
+  of mOr: ibOr32
+  of mXor: ibXor32
+  of mShlI: ibShl32
+  of mShrI: ibShrS32
+  of mNot: itEqz32
+  of mEqI: irEq32  
+  of mLtU: irLtU32
+  of mLtI: irLtS32
+  of mLeU: irLeU32
+  of mLeI: irLeS32
+  else: woNop
 
 proc gen(w: WasmGen, n: PNode): WasmNode =
   echo "# gen ", $n.kind
   case n.kind:
+  of nkCommentStmt, nkTypeSection, nkProcDef, nkPragma, nkEmpty: discard
   of nkNilLit:
     result = newConst(0'i32)
-  of nkIntLit, nkInt32Lit, nkCharLit:
+  of nkCharLit..nkInt32Lit:
     result = newConst(n.intVal.int32)
+  of nkUIntLit..nkUInt32Lit:
+    result = newConst(n.intVal.uint32)
   of nkFloat32Lit:
     result = newConst(n.floatVal.float32)
   of nkFloatLit, nkFloat64Lit:
     result = newConst(n.floatVal.float64)
-  of nkCommentStmt, nkTypeSection, nkProcDef: discard
   of nkCallKinds:
-    echo "# genCall", treeToYaml n
-    let s = n[namePos].sym
-    if not w.generatedProcs.hasKey(s.mangleName):
-      w.genProc(s)
+    echo "# genCall" #, treeToYaml n
+    let 
+      s = n[namePos].sym
+      isMagic = s.magic != mNone
 
+    if n.kind == nkPrefix and isMagic:
+      return newUnaryOp(getMagicOp(n[0].sym.magic), w.gen(n[1]))
+      
+    elif n.kind == nkInfix and isMagic:
+      return newBinaryOp(getMagicOp(n[0].sym.magic), w.gen(n[1]), w.gen(n[2]))
+    elif not w.generatedProcs.hasKey(s.mangleName):
+      w.genProc(s)
     var args = newSeq[WasmNode]()
     for i in 1..<n.sons.len:
       args.add(gen(w,n[i]))
     let (idx, isImport) = w.generatedProcs[s.mangleName] 
     result = newCall(idx, args, isImport)
   of nkSym:
-    result = newLoad(memLoadI32, 0, 1, w.genSymLoc(n.sym))
+    var loadKind : WasmOpKind = memLoadI32
+    if n.sym.typ.kind in {tyFloat,tyFloat64}:
+      loadKind = memLoadF64
+    elif n.sym.typ.kind == tyFloat32:
+      loadKind = memLoadF32
+    result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
+    # FIXME: max uint value is bound by max int value
+    # becuase wasm mvp is 32bit only
   of nkStmtList:
     result = newOpList()
     for stm in n:
       let gn = w.gen(stm)
       if not gn.isNil: result.sons.add(gn)
-  of nkVarSection:
+  of nkVarSection, nkLetSection, nkConstSection:
+    #echo treeToYaml n
     echo "# genVarSection" #TODO
     for iddef in n.sons:
       w.genIdentDefs(iddef)
+  of nkDerefExpr, nkHiddenDeref:
+    echo treeToYaml n
+    var loadKind : WasmOpKind = memLoadI32
+    if n.typ.kind in {tyFloat,tyFloat64}:
+      loadKind = memLoadF64
+    elif n.typ.kind == tyFloat32:
+      loadKind = memLoadF32
+    result = newLoad(loadKind, 0, 1, 
+      newLoad(memLoadI32, 0, 1, w.genSymLoc(n[0].sym))
+    )
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)
@@ -291,15 +380,17 @@ proc putInitFunc(w: WasmGen) =
       w.nextFuncIdx, newType(vtNone),  newOpList(w.initExprs), nil, "init", true
     )
   )
-  echo "init :", w.nextFuncIdx
+  echo "init: ", w.nextFuncIdx
   inc w.nextFuncIdx
 #-------------linker-----------------------------------#
 proc linkPass(mainModuleFile:string, w:WasmGen) =
-  echo "linking..."
+  echo "genloaders..."
   #TODO: allow user defined glue
   if optRun in gGlobalOptions:
     # generate a js file suitable to be run by node
     writeFile(mainModuleFile.changeFileExt("js"), generateNodeLoader(w.s.name.s))
+    # TODO: removeme
+    writefile(mainModuleFile.changeFileExt("html"), generateLoader(w.s.name.s))
   else:
     writefile(mainModuleFile.changeFileExt("html"), generateLoader(w.s.name.s))
 

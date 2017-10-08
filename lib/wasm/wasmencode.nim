@@ -20,7 +20,7 @@ proc toBytes*(val:SomeNumber):seq[byte] =
       sizeof(val)
   )
 
-proc toBytes(s: string): seq[byte] =
+proc toBytes*(s: string): seq[byte] =
   assert(not s.isNil)
   result = newSeq[byte](s.len)
   copymem(
@@ -106,8 +106,8 @@ proc encode(w: WasmOpKind): byte =
   # Query memory size
   of WasmOpKind.memGrow : result = 0x40.byte
   # Const
-  of WasmOpKind.constI32 : result = 0x41.byte
-  of WasmOpKind.constI64 : result = 0x42.byte
+  of WasmOpKind.constI32, constUI32 : result = 0x41.byte
+  of WasmOpKind.constI64, constUI64 : result = 0x42.byte
   of WasmOpKind.constF32 : result = 0x43.byte
   of WasmOpKind.constF64 : result = 0x44.byte
   # Conversion
@@ -256,7 +256,7 @@ proc encode(w: WasmOpKind): byte =
 
 proc encode(op: WasmNode): seq[byte] =
   # check operator...
-  #echo "# encode opcode",ord op.kind
+  #echo "# encode opcode", $op.kind
   result = newSeq[byte]()
   #echo "encode is nil: ", op.isNil
   case op.kind:
@@ -276,9 +276,15 @@ proc encode(op: WasmNode): seq[byte] =
   of constI32, constI64:
     result = @[encode(op.kind)]
     result.add(op.intVal.int32.signedLEB128)
-  of constF32, constF64:
+  of constUI32, constUI64:
     result = @[encode(op.kind)]
-    result.add(op.floatVal.toBytes)
+    result.add(op.uintVal.uint32.unsignedLEB128)
+  of constF32:
+    result = @[encode(op.kind)]
+    result.add(op.floatVal.float32.toBytes)
+  of constF64:
+    result = @[encode(op.kind)]
+    result.add(op.floatVal.float64.toBytes)
   of MemLoad, MemStore:
     for o in op.sons:
       if not o.isNil: add result, encode(o)
@@ -372,7 +378,7 @@ proc encode(data: seq[WasmData]): tuple[num: int, d: seq[byte]] =
     # header
     result.d.add(0'i32.unsignedLeb128) # memory in which to store data
     result.d.add(0x41.byte) # i32.const
-    result.d.add(d.index.int32.unsignedLeb128) # i32.literal `d.id`
+    result.d.add(d.index.int32.signedLeb128) # i32.literal `d.id`
     result.d.add(0x0b.byte) # end
     result.d.add(d.payload.len.int32.unsignedLeb128) # segment length
     # segment
@@ -501,7 +507,7 @@ proc writeTo*(m: seq[byte], name:string) =
   writeFile(name, res)
 
 when isMainModule:
-  import wanodes
+  import wasmnode
   var 
     m = newModule("test")
     i = newImport(0,ekFunction, "glue", "log", newType(vtF32, vtI32), exported=true)

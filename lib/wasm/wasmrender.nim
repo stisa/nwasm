@@ -117,6 +117,12 @@ proc render(n: WasmNode, indlv = 0): string =
   "value": $3,
   "sons": $2
 }""" % [$n.kind, render(n.sons, indlv), $n.intVal]
+  of constUI32, constUI64:
+    result = """{
+  "opcode": $1,
+  "value": $3,
+  "sons": $2
+}""" % [$n.kind, render(n.sons, indlv), $n.uintVal]
   of constF32, constF64:
     result = """{
   "opcode": $1,
