@@ -1,5 +1,7 @@
 import
-  ../Nim/compiler/[ast, astalgo, types, msgs, wordrecg, trees, ropes]
+  ../Nim/compiler/[ast, astalgo, types, sighashes, msgs, wordrecg, trees, ropes]
+
+import md5
 
 from wasmast import WasmValueType
 
@@ -27,7 +29,7 @@ proc mapType*(tt:PType):WasmValueType =
   #  tyString, tyPointer, tySequence, tyArray, tyProc,
   #  tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
   of tyBool,tyChar, tyInt..tyInt32, tyUint..tyUint32,
-    tyString, tyPtr:
+    tyString, tyPtr, tyRef:
     result = vtI32
   of tyFloat32:
     result = vtF32
@@ -84,3 +86,19 @@ proc mangle*(name: string): string =
       requiresUnderscore = true
   if requiresUnderscore:
     result.add "_"
+
+proc mangleName*(s:PSym):string = 
+  echo "# mangleName ", s.name.s, " " , s.kind # ,"\n",typeToyaml s.typ
+  result = (s.name.s & $s.hashProc).mangle
+  #result = (s.name.s & "_" & s.typ.typeToString).mangle
+  #[case s.kind:
+  of skType:
+    result = s.name.s.mangle & $s.typ.kind
+  of skProc:
+    result = s.name.s.mangle
+    for s in s.typ.n:
+  else:
+    result = s.name.s.mangle
+    for tson in s.typ.sons:
+      if not tson.isNil:
+        result.add("_" & $tson.kind)]#

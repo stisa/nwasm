@@ -15,6 +15,7 @@ type
   
   WAsmImport* = ref object
     module,name: string
+    mangledName*: string
     kind: WasmExternalKind
     idx: Natural
     typ*: WasmType
@@ -46,9 +47,9 @@ proc newType*(rs: WasmValueType,
   prs: varargs[WasmValueType]): WAsmType = WasmType(params: @prs, res: rs)
 
 proc newImport*(id: Natural, kd: WasmExternalKind, 
-  module, name:string, typ: WasmType, exported:bool = false): WAsmImport =
-  WAsmImport( module: module, name: name, kind: kd, idx: id,
-    typ: typ, exported: exported)
+  module, name:string, mangledName:string, typ: WasmType, exported:bool = false): WAsmImport =
+  WAsmImport( module: module, name: name, mangledName: mangledName, kind: kd,
+    idx: id, typ: typ, exported: exported)
 proc id*(i: WAsmImport): Natural = i.idx
 proc module*(i: WAsmImport): string = i.module
 proc kind*(i: WAsmImport): WasmExternalKind = i.kind
@@ -62,10 +63,10 @@ proc kind*(e: WAsmExport): WasmExternalKind = e.kind
 proc name*(e: WAsmExport): string = e.name
 
 proc newFunction*(idx: Natural, typ: WasmType, code: WasmNode, 
-  lc: seq[WasmValueType] = nil, name: string = "unknownFn", 
+  lc: seq[WasmValueType] = nil, name: string = "unknownFn",  
   exported:bool = false): WAsmFunction =
-  WAsmFunction(idx: idx, hoistedIndex: -1, name: name, typ: typ,
-    body: code, locals: lc, exported:exported)
+  WAsmFunction(idx: idx, hoistedIndex: -1, name: name,
+    typ: typ, body: code, locals: lc, exported:exported)
 proc id*(f: WAsmFunction): Natural = f.idx
 
 proc newMemory*(pages: Natural = 1): WAsmMemory = 
