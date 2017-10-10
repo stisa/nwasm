@@ -75,7 +75,7 @@ proc newEnd*():WasmNode {.inline.} = newWANode(woEnd)
 proc newWhileLoop*(cond:WasmNode, inner:WasmNode):WasmNode =
   # https://github.com/rhmoller/wasm-by-hand/blob/master/src/controlflow.wat
   result = newWANode(woBlock)
-  result.sig = vtNone
+  result.sig = ltPseudo
   var 
     brkcond = newWANode(woBrIf)  
     brret = newWANode(woBr)
