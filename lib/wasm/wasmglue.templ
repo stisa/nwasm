@@ -78,7 +78,7 @@ function rawEcho(){
                     $$${name}.module = results.module
                     $$${name}.memory = new Uint8Array(results.instance.exports.$$memory.buffer)
                     $$${name}.exports = results.instance.exports
-                    $$${name}.exports.init() // call the init proc, like calling main in C
+                    $$${name}.exports.nimInit() // call the init proc, like calling main in C
             });
         </script>
         <script>${generateJSGlue(name)}</script>
@@ -113,7 +113,7 @@ WebAssembly.instantiate(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.by
     $$${name}.module = results.module
     $$${name}.memory = new Uint8Array(results.instance.exports.$$memory.buffer)
     $$${name}.exports = results.instance.exports
-    $$${name}.exports.init() // call the init proc, like calling main in C
+    $$${name}.exports.nimInit() // call the init proc, like calling main in C
 });
 ${generateJSGlue(name)}
 # end proc
