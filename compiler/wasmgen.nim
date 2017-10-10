@@ -50,17 +50,6 @@ const
 var genCtx : WasmGen
 
 proc gen(w: WasmGen, n: PNode):WasmNode
-
-proc mangleName(s:PSym):string = 
-  echo "# mangleName ", s.name.s, " " , s.kind #,"\n",typeToyaml s.typ
-  case s.kind:
-  of skType:
-    result = s.name.s.mangle & $s.typ.kind
-  else:
-    result = s.name.s.mangle
-    for tson in s.typ.sons:
-      if not tson.isNil:
-        result.add("_" & $tson.kind)
     
 proc getArrayLen(t:PType): int =
   doAssert t.kind == tyArray, $t.kind
@@ -170,7 +159,7 @@ proc genIdentDefs(w: WasmGen, n: PNode) =
   
   w.store(s, typ, n[2], w.nextMemIdx)
 
-proc genBody(w: WasmGen,params:Table[string,tuple[vt:WasmValueType,default:PNode]], n: PNode): WasmNode =
+proc genBody(w: WasmGen,params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]], n: PNode): WasmNode =
   result = newWANode(opList)
   var res: WasmNode
   case n.kind:
@@ -195,11 +184,10 @@ proc genProc(w: WasmGen, s: PSym) =
     fparams = s.typ.n
     pragmas = s.ast[4]
     body = s.getBody()
-
   var 
-    params = initTable[string,tuple[vt:WasmValueType,default:PNode]]()
+    params = initTable[string,tuple[t: PType, vt:WasmValueType,default:PNode]]()
     res = mapType(fparams[0].typ)
-  
+    paramTypeList = newSeq[PType]()
   #echo "params....", treeToYaml fparams
 
   for par in fparams.sons[1..^1]:
@@ -207,9 +195,10 @@ proc genProc(w: WasmGen, s: PSym) =
       #echo treeToYaml par
       if par.len > 3:
         for i in 0..<par.len-2: # eg a,b: int
+          paramTypeList.add( par[^2].typ)
           params.add(
             par[i].ident.s, 
-            (mapType(par[^2].typ), if par[^1].kind!=nkEmpty: par[^1] else: nil ) # FIXME: detect type of param properly
+            (par[^2].typ, mapType(par[^2].typ), if par[^1].kind!=nkEmpty: par[^1] else: nil ) # FIXME: detect type of param properly
           )
       else:
         var 
@@ -219,14 +208,16 @@ proc genProc(w: WasmGen, s: PSym) =
           if par[2].kind == nkDotExpr:
             defaultVal = par[2][0]
             typ = defaultVal.typ
+        paramTypeList.add(typ)
         params.add( # a: int
           par[0].ident.s, 
-          (mapType(typ), defaultVal) # FIXME: detect type of param properly
+          (typ, mapType(typ), defaultVal) # FIXME: detect type of param properly
         )
     elif par.kind == nkSym:
+      paramTypeList.add( par.sym.typ)
       params.add( # a: int
         par.sym.name.s, 
-        (mapType(par.sym.typ), par.sym.ast) # FIXME: detect type of param properly
+        (par.sym.typ, mapType(par.sym.typ), par.sym.ast) # FIXME: detect type of param properly
       )
     elif par.kind == nkEmpty: continue
     else:
@@ -259,7 +250,7 @@ proc genProc(w: WasmGen, s: PSym) =
     
     w.m.imports.add(
       newImport(
-        w.nextImportIdx, ekFunction, headername, importcname, fntype, s.flags.contains(sfExported)
+        w.nextImportIdx, ekFunction, headername, importcname, s.mangleName, fntype, s.flags.contains(sfExported)
       )
     )
     w.generatedProcs.add(s.mangleName, (w.nextImportIdx,true)) 
@@ -274,6 +265,92 @@ proc genProc(w: WasmGen, s: PSym) =
     inc w.nextFuncIdx
   else:
     internalError("# genProc generating unused proc " & s.name.s)
+
+proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode = 
+  case s.magic:
+  of mNew:
+    # new gets passed a ref, so local 0 is the location of the ref to the
+    # object to initialize.
+    #echo treeToYaml n[1]
+    let size = n[1].typ.lastSon.getSize
+    var magicbody = newOpList()
+    magicbody.sons.add([
+      # heap ptr points to next free byte in memory. Use it to
+      # move the pointed-to location of the ref to somewhere free
+      newStore(
+        memStoreI32, newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc)), 
+        0, newGet(woGetLocal, 0)
+      ),
+      # move heap ptr by `size` bytes.
+      # the assumption is that everything after heap ptr is free to take
+      newStore(
+        memStoreI32, newBinaryOp(
+          ibAdd32, newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc)), newConst(size.int32)
+        ),  
+        0, newConst(heapPtrLoc)
+      )
+    ])
+    
+    w.m.functions.add(
+      newFunction(
+        w.nextFuncIdx, newType(vtNone, vtI32), magicbody, nil, s.mangleName,
+        s.flags.contains(sfExported)
+      )
+    )
+    result = newCall(w.nextFuncIdx, w.gen(n[1]), false)
+    w.generatedProcs.add(s.mangleName, (w.nextFuncIdx,false)) 
+    inc w.nextFuncIdx
+  of mReset:
+  
+    var loopBody = newWANode(opList)
+
+    loopBody.sons.add(
+      newStore(
+        memStoreI32,
+        newConst(0'i32),
+        0'i32,
+        newGet(woGetLocal, 1)
+      )
+    )
+    loopBody.sons.add(
+      newSet(
+        woSetLocal, 1'i32,
+        newBinaryOp(
+          ibAdd32,
+          newGet(woGetLocal, 1),
+          # FUTURE FIXME: when some types have size <4, this needs to be reworked too
+          newConst(4'i32)
+        )
+      )
+    )
+
+    var magicbody = newWhileLoop(
+          newBinaryOp(
+            irLtU32,
+            newGet(woGetLocal, 1),
+            newBinaryOp(
+              ibAdd32,
+              newGet(woGetLocal, 0),
+              newConst(n[0].typ.getSize.int32)
+            )
+          ),
+          loopBody
+        )
+        
+    w.m.functions.add(
+      newFunction(
+        w.nextFuncIdx, newType(vtNone, vtI32), magicbody, @[vtI32], s.mangleName,
+        s.flags.contains(sfExported)
+      )
+    )
+    
+    result = newCall(w.nextFuncIdx, w.gen(n[1]), false)
+    
+    w.generatedProcs.add(s.mangleName,(w.nextFuncIdx.int,false))
+    inc w.nextFuncIdx
+
+  else: 
+    internalError("# callMagic unhandled magic: " & $s.magic)
 
 proc getMagicOp(m: TMagic): WasmOpKind =
   result = case m:
@@ -297,6 +374,57 @@ proc getMagicOp(m: TMagic): WasmOpKind =
   of mLeI: irLeS32
   else: woNop
 
+proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
+  var 
+    lhsIndex: WasmNode
+    lhsOffset = 0'i32 # TODO: a node?
+  # let's try to enumerate cases (a = lhs, c = rhs):
+  # - a.b = c 
+  # - a[].b = c
+  # - a = c
+  # - a[b] = c
+  # - strings, seq (they copy, so data(a) = data(c) but addr a != addr c)
+  echo lhsNode.kind, " - ", lhsNode.typ.kind 
+  case lhsNode.kind
+  of nkDerefExpr: 
+    # index is the location pointed to
+    lhsIndex = newLoad(memLoadI32, 0, 1, w.genSymLoc(lhsNode[0].sym))
+  of nkSym:
+    lhsIndex = w.genSymLoc(lhsNode.sym)
+  of nkDotExpr:
+    if lhsNode[0].kind == nkSym:
+      lhsIndex = w.genSymLoc(lhsNode[0].sym)
+      lhsOffset = lhsNode[1].sym.offset.int32
+    elif lhsNode[0].kind in {nkHiddenDeref, nkDerefExpr}:
+      lhsIndex = newLoad(memLoadI32, 0, 1, w.genSymLoc(lhsNode[0][0].sym))
+      lhsOffset = lhsNode[1].sym.offset.int32
+    else:
+      internalError("genAsgn nkDotExpr error")
+  else: 
+    internalError("unhandled lhs kind " & $lhsNode.kind)
+  
+  case lhsNode.typ.kind:
+  of tyInt,tyBool,tyInt32, tyEnum, tyChar:
+    result = newStore(memStoreI32, w.gen(rhsNode), lhsOffset, lhsIndex)
+  of tyRef:
+    result = newStore(memStoreI32, w.gen(rhsNode), lhsOffset, lhsIndex) #w.gen(lhsNode))
+  of tyFloat32:
+    result = newStore(memStoreF32, w.gen(rhsNode), lhsOffset, lhsIndex)
+  of tyFloat:
+    var storeKind: WasmOpKind 
+    if lhsNode.typ.size == 4:
+      storeKind = memStoreF32
+    elif lhsNode.typ.size == 8:
+      storeKind = memStoreF64
+    else:
+      internalError("impossible float size" & $lhsNode.typ.size)
+    result = newStore(storeKind, w.gen(rhsNode), lhsOffset, lhsIndex)
+  of tyString:
+    result = newStore(memStoreI32, w.gen(rhsNode), lhsOffset, lhsIndex) #w.gen(lhsNode))
+  else:  
+    internalError("# genAsgn missing case: " & $lhsNode.typ.kind)
+
+
 proc gen(w: WasmGen, n: PNode): WasmNode =
   echo "# gen ", $n.kind
   case n.kind:
@@ -318,10 +446,11 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       isMagic = s.magic != mNone
 
     if n.kind == nkPrefix and isMagic:
-      return newUnaryOp(getMagicOp(n[0].sym.magic), w.gen(n[1]))
-      
+      return newUnaryOp(getMagicOp(s.magic), w.gen(n[1]))
     elif n.kind == nkInfix and isMagic:
-      return newBinaryOp(getMagicOp(n[0].sym.magic), w.gen(n[1]), w.gen(n[2]))
+      return newBinaryOp(getMagicOp(s.magic), w.gen(n[1]), w.gen(n[2]))
+    elif isMagic:
+      return w.callMagic(s, n)
     elif not w.generatedProcs.hasKey(s.mangleName):
       w.genProc(s)
     var args = newSeq[WasmNode]()
@@ -335,7 +464,14 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       loadKind = memLoadF64
     elif n.sym.typ.kind == tyFloat32:
       loadKind = memLoadF32
-    result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
+    if n.sym.typ.kind == tyRef:
+      # tyRef generates the location of the pointer, not the location of
+      # the data pointed to. This is to allow to do move the location pointed to
+      # inside the procs, useful eg. for `new`
+      echo "tyRef"
+      result = w.genSymLoc(n.sym)
+    else:
+      result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
     # FIXME: max uint value is bound by max int value
     # becuase wasm mvp is 32bit only
   of nkStmtList:
@@ -360,7 +496,6 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     )
   of nkDotExpr:
     # a.b
-    echo treeToYaml n
     var loadKind : WasmOpKind = memLoadI32
     if n.typ.kind in {tyFloat,tyFloat64}:
       loadKind = memLoadF64
@@ -376,6 +511,8 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       )
     else:
       internalError("nkDotExpr n[0] kind: " & $n[0].kind) 
+  of nkAsgn:
+    result = w.genAsgn(n[0], n[1])
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)
@@ -392,7 +529,7 @@ proc putInitFunc(w: WasmGen) =
   if w.initExprs.len<1: return # no expression, no need for a init proc
   w.m.functions.add(
     newFunction(
-      w.nextFuncIdx, newType(vtNone),  newOpList(w.initExprs), nil, "init", true
+      w.nextFuncIdx, newType(vtNone),  newOpList(w.initExprs), nil, "nimInit", true
     )
   )
   echo "init: ", w.nextFuncIdx
