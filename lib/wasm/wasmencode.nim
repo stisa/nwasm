@@ -254,6 +254,7 @@ proc encode(w: WasmOpKind): byte =
   of WasmOpKind.frGe64 : result = 0x66.byte
   of WasmOpKind.opList: doAssert(w!=opList)
 
+var totalImports = 0
 proc encode(op: WasmNode): seq[byte] =
   # check operator...
   #echo "# encode opcode", $op.kind
@@ -271,7 +272,7 @@ proc encode(op: WasmNode): seq[byte] =
       add result, encode(o)
     add result, encode(op.kind)
     if not op.isImport:
-      op.funcIndex = op.funcIndex #+totalImports
+      op.funcIndex = op.funcIndex + totalImports
     add result, op.funcIndex.int32.unsignedLEB128
   of constI32, constI64:
     result = @[encode(op.kind)]
@@ -429,7 +430,10 @@ proc encode*(m: WAsmModule): seq[byte] =
   result = concat(0x6d736100.int32.toBytes, 0x00000001.int32.toBytes)
   let (importNum,importedTypes, imports) = encode(m.imports)
   for i in m.imports:
-    if i.exported: m.exports.add(newExport(i.id, i.kind, i.name))
+    if i.exported: m.exports.add(newExport(i.id, i.kind, i.mangledName))
+  
+  totalImports = importNum # this is needed to correct the calc of woCall indexes
+  
   for f in m.functions.mitems: # imports have priority in function index space
     f.hoistedIndex = f.id+importNum
     if f.exported: m.exports.add(newExport(f.hoistedIndex, ekFunction, f.name))
@@ -452,7 +456,7 @@ proc encode*(m: WAsmModule): seq[byte] =
                                                     # +1 because the num of imports
   result.add(importNum.int32.unsignedLeb128) # num of import
   result.add(imports) # imports data
-
+  
   # 3 FunctionSection
   # this part just needs to add indexes from importNum to fnNum
   # because types are guaranteed to be ordered (iT1,...,iTn,fT1,...,fTn)
@@ -506,11 +510,11 @@ proc writeTo*(m: seq[byte], name:string) =
   )
   writeFile(name, res)
 
-when isMainModule:
+when false:
   import wasmnode
   var 
     m = newModule("test")
-    i = newImport(0,ekFunction, "glue", "log", newType(vtF32, vtI32), exported=true)
+    i = newImport(0,ekFunction, "glue", "log",  newType(vtF32, vtI32), exported=true)
     i2 = newImport(1,ekFunction, "glue", "assert", newType(vtNone, vtI32, vtF32, vtF32))
     #e = newExport(0,ekFunction, "log")
     mem = newMemory(1)
