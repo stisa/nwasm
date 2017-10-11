@@ -135,7 +135,10 @@ proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
       w.store(es, t, colonexpr[1], tmpMemIdx)
   of nkNilLit:
     debug s
-  of nkExprColonExpr, nkInfix, nkBracket, nkCall:
+  of nkBracket:
+    for val in n:
+      w.store(nil, val.typ, val, memIndex)
+  of nkExprColonExpr, nkInfix,  nkCall:
     internalError("TODO: genIdentDefs: initialize")
   else:
     internalError("genIdentDefs: unhandled identdef kind: " & $n.kind)
@@ -424,6 +427,52 @@ proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
   else:  
     internalError("# genAsgn missing case: " & $lhsNode.typ.kind)
 
+proc accessLocAux(w: WasmGen, n: PNode): WasmNode =
+  case n.kind
+  of nkDerefExpr: 
+    # index is the location pointed to
+    result = newLoad(memLoadI32, 0, 1, w.genSymLoc(n[0].sym))
+  of nkSym:
+    result = w.genSymLoc(n.sym)
+  of nkDotExpr:
+    if n[0].kind == nkSym:
+      result = newBinaryOp(
+        ibAdd32,
+        w.genSymLoc(n[0].sym),
+        newConst(n[1].sym.offset.int32)
+      ) 
+    elif n[0].kind in {nkHiddenDeref, nkDerefExpr}:
+      result = newBinaryOp(
+        ibAdd32,
+        newLoad(memLoadI32, 0, 1, w.genSymLoc(n[0][0].sym)),
+        newConst(n[1].sym.offset.int32)
+      )
+    else:
+      internalError("accessLocAux nkDotExpr error")
+  else: 
+    internalError("unhandled accessLocAux kind " & $n.kind)
+  
+proc genAccess(w: WasmGen, n: PNode): WasmNode =
+  let 
+    symIndex = w.accessLocAux(n[0])
+    accPos = w.gen(n[1])
+    t = n.typ
+    accIndex = newBinaryOp(
+      ibAdd32, 
+      symIndex, 
+      newBinaryOp(
+        ibMul32,
+        accPos, newConst(t.getSize().alignTo4.int32)
+      )
+    )
+  echo "genaccess", mapType(t)
+  case mapType(t):
+  of vtI32: result = newLoad(memLoadI32, 0 , 1, accIndex)
+  of vtF32: result = newLoad(memLoadF32, 0 , 1, accIndex)
+  of vtF64: result = newLoad(memLoadF64, 0 , 1, accIndex)
+  else:  
+    internalError("# genAccess missing case: " & $t.kind)
+
 
 proc gen(w: WasmGen, n: PNode): WasmNode =
   echo "# gen ", $n.kind
@@ -474,6 +523,9 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
     # FIXME: max uint value is bound by max int value
     # becuase wasm mvp is 32bit only
+  of nkBracketExpr:
+    echo treeToYaml n
+    result = w.genAccess(n)
   of nkStmtList:
     result = newOpList()
     for stm in n:
