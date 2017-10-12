@@ -97,7 +97,10 @@ proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
     # |ptr|len|strdata|
     # |4b |4b |?b     |
     #     ^ptr points here
-    dataseg = (memIndex+wasmPtrSize).uint32.toBytes & n.strVal.len.uint32.toBytes & n.strVal.toBytes
+    if n.strVal.len > 0:
+      dataseg = (memIndex+wasmPtrSize).uint32.toBytes & n.strVal.len.uint32.toBytes & n.strVal.toBytes
+    else:
+      dataseg = (memIndex+wasmPtrSize).uint32.toBytes & n.strVal.len.uint32.toBytes
   of nkAddr:
     dataseg.setLen(wasmPtrSize)
     w.initExprs.add(
@@ -284,17 +287,19 @@ proc getMagicOp(m: TMagic): WasmOpKind =
     mEqRef, mEqStr: irEq32  
     # If addr strA == addr strB, they are the same string
   of mLtU: irLtU32
-  of mLtI: irLtS32
+  of mLtI, mLtEnum, mLtStr, mLtCh, mLtSet, mLtB, mLtPtr: irLtS32
   of mLeU: irLeU32
-  of mLeI: irLeS32
+  of mLeI, mLeEnum, mLeStr, mLeCh, mLeSet, mLeB, mLePtr: irLeS32
   else: woNop
   if result == woNop:
     internalError("unmapped magic: " & $m)
 
 const UnaryMagic = {mNot}    
 const BinaryMagic = {mAddI,mAddU,mSubI,mSubU,mMulI,mMulU,mDivI,mDivU,
-  mModI,mModU, mAnd, mOr, mXor, mShlI, mShrI, mLtU, mLtI, mLeU, mLeI,
-  mEqI, mEqF64, mEqEnum, mEqCh, mEqB, mEqRef, mEqStr}
+  mModI,mModU, mAnd, mOr, mXor, mShlI, mShrI, mLtU, mLeU,
+  mEqI, mEqF64, mEqEnum, mEqCh, mEqB, mEqRef, mEqStr,
+  mLtI, mLtEnum, mLtStr, mLtCh, mLtSet, mLtB, mLtPtr,
+  mLeI, mLeEnum, mLeStr, mLeCh, mLeSet, mLeB, mLePtr}
 
 proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode = 
   case s.magic:
@@ -407,6 +412,8 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
           w.gen(n[1]), 0'i32, newConst((w.nextMemIdx+t.getSize).int32)
         )
       )
+  of mSizeOf:
+    result = newConst(n[1].typ.getSize.int32)
   else: 
     internalError("# callMagic unhandled magic: " & $s.magic)
 
@@ -511,7 +518,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
   echo "# gen ", $n.kind
   case n.kind:
   of nkCommentStmt, nkTypeSection, nkProcDef, nkPragma, nkEmpty,
-    nkTemplateDef, nkMacroDef: discard
+    nkTemplateDef, nkMacroDef, nkIncludeStmt: discard
   of nkNilLit:
     result = newConst(0'i32)
   of nkCharLit..nkInt32Lit:
@@ -601,6 +608,10 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       internalError("nkDotExpr n[0] kind: " & $n[0].kind) 
   of nkAsgn:
     result = w.genAsgn(n[0], n[1])
+  of nkHiddenStdConv:
+    echo "nkHiddenStdConv for " & $n.typ.kind
+    result = w.gen(n[1]) 
+    echo treeToYaml n
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)
