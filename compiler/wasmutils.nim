@@ -3,7 +3,7 @@ import
 
 import md5
 
-from wasmast import WasmValueType
+from wasmast import WasmValueType, WasmOpKind
 
 from strutils import toHex, Digits
 
@@ -29,7 +29,7 @@ proc mapType*(tt:PType):WasmValueType =
   #  tyString, tyPointer, tySequence, tyArray, tyProc,
   #  tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
   of tyBool,tyChar, tyInt..tyInt32, tyUint..tyUint32,
-    tyString, tyPtr, tyRef:
+    tyString, tyPtr, tyRef, tyObject:
     result = vtI32
   of tyFloat32:
     result = vtF32
@@ -37,6 +37,26 @@ proc mapType*(tt:PType):WasmValueType =
     result = vtF64
   else:
     internalError("unmapped type kind " & $t.kind)
+
+proc mapStoreKind*(tt:PType): WasmOpKind =
+  case mapType(tt):
+  of vtI32: result = memStoreI32
+  of vtI64: result = memStoreI32 # no 64 bit in wasm
+  of vtF32: result = memStoreF32
+  of vtF64: result = memStoreF64
+  else:
+    internalError("unmapped store for type: " & $tt.kind)
+
+proc mapLoadKind*(tt:PType): WasmOpKind =
+  case mapType(tt):
+  of vtI32: result = memLoadI32
+  of vtI64: result = memLoadI32
+  of vtF32: result = memLoadF32
+  of vtF64: result = memLoadF64
+  else:
+    internalError("unmapped load for type: " & $tt.kind)
+    
+
 
 proc alignTo4*(n:Natural): Natural = (n + 3) and not(0x03)
   # Next multiple of 4 or return n if n is already a multiple of 4

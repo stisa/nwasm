@@ -50,38 +50,21 @@ const
 var genCtx : WasmGen
 
 proc gen(w: WasmGen, n: PNode):WasmNode
-    
-proc getArrayLen(t:PType): int =
-  doAssert t.kind == tyArray, $t.kind
-  result = 1+(t[0].n[1].intVal - t[0].n[0].intVal).int
-
-proc calcFieldOffset(obj: PType, field:PSym) =
-  # Get the offset by adding typ.size until the field in objType == `field`
-  # The zero is at the start of the object.
-
-  if field.offset>=0 : return # field has been calculated already
-  field.offset = 0
-
-  assert(not obj.isnil, "#1 nil objtype")
-  let objType = obj.skipTypesOrNil({tyRef, tyPtr, tyVar, tyGenericInst})
-  
-  assert( objtype.kind == tyObject, $objtype.kind & "\n" & $typeToYaml(objType))
-  for objf in objType.n:
-    if objf.sym == field: break
-    field.offset += objf.typ.size.int
+proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode
 
 proc location(s:PSym):int32 = 
-  echo "# crazyLoc ", s.name.s, " owner: ", s.owner.name.s
+  #echo "# crazyLoc ", s.name.s, " owner: ", s.owner.name.s
   if s.offset<0:
     internalError("uninitialized offset: " & s.name.s)
   result = s.offset.int32 
+
 proc genSymLoc(w: WasmGen, s: PSym): WasmNode =
-  let t = s.typ.skipTypes(abstractVarRange)
+  #let t = s.typ.skipTypes(abstractVarRange)
   #case t.kind:
   #of tyString, tyRef, tyPtr, tyPointer:
   #  result = newLoad(memLoadI32, 0, 1, newConst(s.offset.int32))
   #else:
-  result = newConst(s.offset.int32)
+  result = newConst(s.location)
 
 proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
   # a var section stores its data in `data` or has an
@@ -138,8 +121,21 @@ proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
   of nkBracket:
     for val in n:
       w.store(nil, val.typ, val, memIndex)
-  of nkExprColonExpr, nkInfix,  nkCall:
-    internalError("TODO: genIdentDefs: initialize")
+  of nkInfix, nkPrefix, nkCall:
+    #echo treeToYaml n, n.typ.getSize.alignTo4
+    dataseg.setLen(n.typ.getSize)
+    if n[0].sym.magic != mNone:
+      w.initExprs.add(w.callMagic(n[0].sym, n))
+    else:
+      w.initExprs.add( # FIXME: I'm here
+        newStore(
+          n.typ.mapStoreKind,
+          w.gen(n),
+          0'i32, newConst(memIndex)
+        )
+      )
+  of nkExprColonExpr:
+    internalError("TODO: genIdentDefs: initialize " & $n.kind)
   else:
     internalError("genIdentDefs: unhandled identdef kind: " & $n.kind)
   if not dataseg.isNil and dataseg.len > 0:
@@ -269,8 +265,40 @@ proc genProc(w: WasmGen, s: PSym) =
   else:
     internalError("# genProc generating unused proc " & s.name.s)
 
+proc getMagicOp(m: TMagic): WasmOpKind =
+  result = case m:
+  of mAddI, mAddU: ibAdd32
+  of mSubI, mSubU: ibSub32
+  of mMulI, mMulU: ibMul32
+  of mDivI: ibDivS32
+  of mDivU: ibDivU32
+  of mModI: ibRemS32
+  of mModU: ibRemU32
+  of mAnd: ibAnd32
+  of mOr: ibOr32
+  of mXor: ibXor32
+  of mShlI: ibShl32
+  of mShrI: ibShrS32
+  of mNot: itEqz32
+  of mEqI: irEq32  
+  of mLtU: irLtU32
+  of mLtI: irLtS32
+  of mLeU: irLeU32
+  of mLeI: irLeS32
+  else: woNop
+  if result == woNop:
+    internalError("unmapped magic: " & $m)
+
+const UnaryMagic = {mNot}    
+const BinaryMagic = {mAddI,mAddU,mSubI,mSubU,mMulI,mMulU,mDivI,mDivU,
+  mModI,mModU, mAnd, mOr, mXor, mShlI, mShrI, mEqI, mLtU, mLtI, mLeU, mLeI}
+
 proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode = 
   case s.magic:
+  of UnaryMagic:
+    return newUnaryOp(getMagicOp(s.magic), w.gen(n[1]))
+  of BinaryMagic:
+    return newBinaryOp(getMagicOp(s.magic), w.gen(n[1]), w.gen(n[2]))
   of mNew:
     # new gets passed a ref, so local 0 is the location of the ref to the
     # object to initialize.
@@ -352,30 +380,28 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     w.generatedProcs.add(s.mangleName,(w.nextFuncIdx.int,false))
     inc w.nextFuncIdx
 
+  of mDotDot:
+    let t = n[1].typ.skipTypes(abstractVarRange)
+    if n.sonsLen > 2:
+      result = newOpList(
+        newStore(
+          t.mapStoreKind,
+          w.gen(n[1]), 0'i32, newConst(w.nextMemIdx.int32)
+        ),
+        newStore(
+          t.mapStoreKind,
+          w.gen(n[2]), 0'i32, newConst((w.nextMemIdx+t.getSize).int32)
+        )
+      )
+    else:
+      result = newOpList(
+        newStore(
+          t.mapStoreKind,
+          w.gen(n[1]), 0'i32, newConst((w.nextMemIdx+t.getSize).int32)
+        )
+      )
   else: 
     internalError("# callMagic unhandled magic: " & $s.magic)
-
-proc getMagicOp(m: TMagic): WasmOpKind =
-  result = case m:
-  of mAddI, mAddU: ibAdd32
-  of mSubI, mSubU: ibSub32
-  of mMulI, mMulU: ibMul32
-  of mDivI: ibDivS32
-  of mDivU: ibDivU32
-  of mModI: ibRemS32
-  of mModU: ibRemU32
-  of mAnd: ibAnd32
-  of mOr: ibOr32
-  of mXor: ibXor32
-  of mShlI: ibShl32
-  of mShrI: ibShrS32
-  of mNot: itEqz32
-  of mEqI: irEq32  
-  of mLtU: irLtU32
-  of mLtI: irLtS32
-  of mLeU: irLeU32
-  of mLeI: irLeS32
-  else: woNop
 
 proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
   var 
@@ -494,11 +520,13 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       s = n[namePos].sym
       isMagic = s.magic != mNone
 
-    if n.kind == nkPrefix and isMagic:
+    #[if n.kind == nkPrefix and isMagic:
       return newUnaryOp(getMagicOp(s.magic), w.gen(n[1]))
     elif n.kind == nkInfix and isMagic:
       return newBinaryOp(getMagicOp(s.magic), w.gen(n[1]), w.gen(n[2]))
     elif isMagic:
+      return w.callMagic(s, n)]#
+    if isMagic:
       return w.callMagic(s, n)
     elif not w.generatedProcs.hasKey(s.mangleName):
       w.genProc(s)
