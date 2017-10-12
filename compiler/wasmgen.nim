@@ -75,7 +75,7 @@ proc store(w: WasmGen, s: PSym, typ: PType, n: PNode,  memIndex: var int) =
   of nkEmpty:
     # eg. var s: string
     # produces 4 nil bytes where the string ptr goes
-    dataseg.setLen(typ.size)
+    dataseg.setLen(typ.getSize)
   of nkInt64Lit, nkUInt64Lit:
     internalError("Wasm MVP integers are 32bit only")
   of nkCharLit, nkIntLit, nkInt8Lit,
@@ -280,7 +280,9 @@ proc getMagicOp(m: TMagic): WasmOpKind =
   of mShlI: ibShl32
   of mShrI: ibShrS32
   of mNot: itEqz32
-  of mEqI: irEq32  
+  of mEqI, mEqEnum, mEqCh, mEqB,
+    mEqRef, mEqStr: irEq32  
+    # If addr strA == addr strB, they are the same string
   of mLtU: irLtU32
   of mLtI: irLtS32
   of mLeU: irLeU32
@@ -291,7 +293,8 @@ proc getMagicOp(m: TMagic): WasmOpKind =
 
 const UnaryMagic = {mNot}    
 const BinaryMagic = {mAddI,mAddU,mSubI,mSubU,mMulI,mMulU,mDivI,mDivU,
-  mModI,mModU, mAnd, mOr, mXor, mShlI, mShrI, mEqI, mLtU, mLtI, mLeU, mLeI}
+  mModI,mModU, mAnd, mOr, mXor, mShlI, mShrI, mLtU, mLtI, mLeU, mLeI,
+  mEqI, mEqF64, mEqEnum, mEqCh, mEqB, mEqRef, mEqStr}
 
 proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode = 
   case s.magic:
@@ -300,6 +303,9 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
   of BinaryMagic:
     return newBinaryOp(getMagicOp(s.magic), w.gen(n[1]), w.gen(n[2]))
   of mNew:
+    if w.generatedProcs.hasKey(s.mangleName):
+      return newCall(w.generatedProcs[s.mangleName].id, w.genSymLoc(n[1].sym), false)
+
     # new gets passed a ref, so local 0 is the location of the ref to the
     # object to initialize.
     #echo treeToYaml n[1]
@@ -328,11 +334,12 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
         s.flags.contains(sfExported)
       )
     )
-    result = newCall(w.nextFuncIdx, w.gen(n[1]), false)
+    result = newCall(w.nextFuncIdx, w.genSymLoc(n[1].sym), false)
     w.generatedProcs.add(s.mangleName, (w.nextFuncIdx,false)) 
     inc w.nextFuncIdx
   of mReset:
-  
+    if w.generatedProcs.hasKey(s.mangleName):
+      return newCall(w.generatedProcs[s.mangleName].id, w.genSymLoc(n[1].sym), false)
     var loopBody = newWANode(opList)
 
     loopBody.sons.add(
@@ -375,7 +382,7 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
       )
     )
     
-    result = newCall(w.nextFuncIdx, w.gen(n[1]), false)
+    result = newCall(w.nextFuncIdx, w.genSymLoc(n[1].sym), false)
     
     w.generatedProcs.add(s.mangleName,(w.nextFuncIdx.int,false))
     inc w.nextFuncIdx
@@ -503,7 +510,8 @@ proc genAccess(w: WasmGen, n: PNode): WasmNode =
 proc gen(w: WasmGen, n: PNode): WasmNode =
   echo "# gen ", $n.kind
   case n.kind:
-  of nkCommentStmt, nkTypeSection, nkProcDef, nkPragma, nkEmpty: discard
+  of nkCommentStmt, nkTypeSection, nkProcDef, nkPragma, nkEmpty,
+    nkTemplateDef, nkMacroDef: discard
   of nkNilLit:
     result = newConst(0'i32)
   of nkCharLit..nkInt32Lit:
@@ -541,14 +549,14 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       loadKind = memLoadF64
     elif n.sym.typ.kind == tyFloat32:
       loadKind = memLoadF32
-    if n.sym.typ.kind == tyRef:
+    #[if n.sym.typ.kind == tyRef:
       # tyRef generates the location of the pointer, not the location of
       # the data pointed to. This is to allow to do move the location pointed to
       # inside the procs, useful eg. for `new`
       echo "tyRef"
       result = w.genSymLoc(n.sym)
-    else:
-      result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
+    else:]#
+    result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
     # FIXME: max uint value is bound by max int value
     # becuase wasm mvp is 32bit only
   of nkBracketExpr:
