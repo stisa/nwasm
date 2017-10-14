@@ -147,13 +147,13 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
     dataseg.setLen(4)
     for val in n:
       dataseg[val.intVal.int32 div 32] = dataseg[val.intVal.int32 div 32] or (1 shl (val.intVal mod 32)).uint8
-  of nkInfix, nkPrefix, nkCall:
+  of nkCallKinds:
     # echo treeToYaml n, n.typ.getSize.alignTo4
     dataseg.setLen(n.typ.getSize.alignTo4)
     #if n[0].sym.magic != mNone:
     #  w.initExprs.add(w.callMagic(n[0].sym, n))
     #else:
-    w.initExprs.add( # FIXME: I'm here
+    w.initExprs.add( # TODO: mmh
       newStore(
         n.typ.mapStoreKind,
         w.gen(n),
@@ -285,8 +285,8 @@ proc genProc(w: WasmGen, s: PSym) =
 
 proc getMagicOp(m: TMagic): WasmOpKind =
   result = case m:
-  of mAddI, mAddU: ibAdd32
-  of mSubI, mSubU: ibSub32
+  of mAddI, mAddU, mSucc: ibAdd32
+  of mSubI, mSubU, mPred: ibSub32
   of mMulI, mMulU: ibMul32
   of mDivI: ibDivS32
   of mDivU: ibDivU32
@@ -310,7 +310,7 @@ proc getMagicOp(m: TMagic): WasmOpKind =
     internalError("unmapped magic: " & $m)
 
 const UnaryMagic = {mNot}    
-const BinaryMagic = {mAddI,mAddU,mSubI,mSubU,mMulI,mMulU,mDivI,mDivU,
+const BinaryMagic = {mAddI,mAddU,mSubI,mSubU,mMulI,mMulU,mDivI,mDivU,mSucc,mPred,
   mModI,mModU, mAnd, mOr, mXor, mShlI, mShrI, mLtU, mLeU,
   mEqI, mEqF64, mEqEnum, mEqCh, mEqB, mEqRef, mEqStr, mEqSet,
   mLtI, mLtEnum, mLtStr, mLtCh, mLtSet, mLtB, mLtPtr,
@@ -429,7 +429,23 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
       )
   of mSizeOf:
     result = newConst(n[1].typ.getSize.alignTo4.int32)
+  of mInc, mDec:
+    result = newOpList()
+    result.sons.add(
+      newStore(
+        memStoreI32, 
+        newBinaryOp(
+          if s.magic == mInc: ibAdd32 else: ibSub32,
+          w.gen(n[1]), w.gen(n[2])
+        ), 0, 
+        w.genSymLoc(n[1].sym)        
+      ),
+      # move heap ptr by `size` bytes.
+      # the assumption is that everything after heap ptr is free to take
+     
+    )
   else: 
+    echo treeToYaml n
     internalError("# callMagic unhandled magic: " & $s.magic)
 
 proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
