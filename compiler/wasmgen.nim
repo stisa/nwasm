@@ -430,8 +430,7 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
   of mSizeOf:
     result = newConst(n[1].typ.getSize.alignTo4.int32)
   of mInc, mDec:
-    result = newOpList()
-    result.sons.add(
+    result = newOpList(
       newStore(
         memStoreI32, 
         newBinaryOp(
@@ -439,10 +438,7 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
           w.gen(n[1]), w.gen(n[2])
         ), 0, 
         w.genSymLoc(n[1].sym)        
-      ),
-      # move heap ptr by `size` bytes.
-      # the assumption is that everything after heap ptr is free to take
-     
+      )     
     )
   else: 
     echo treeToYaml n
