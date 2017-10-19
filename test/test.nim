@@ -1,10 +1,14 @@
+
 proc log[T](x:T) {.header:"glue", importc:"log".}
-var c = 1234
-var d = succ c
-log d #== 1235
-var e = pred c 
-log e #== 1233
-inc(d)
-log d #== 1236
-dec(e)
-log e #== 1232
+var c = newSeq[int](3)
+log(c[1]) # == 0)
+c[1] = 123
+c[2] = 456
+log(c[1]) # == 123)
+var d : seq[float]
+newSeq(d, 3)
+log(d[1]) # == 0)
+d[1] = 12.3
+d[2] = 45.6
+log(d[1]) # == 123)
+log c[2]

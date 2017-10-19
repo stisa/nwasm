@@ -79,6 +79,7 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
   # initialization expr, so no node is returned.
   #echo treeToYaml n
   var dataseg: seq[byte] = newSeq[byte]()
+  echo "# store ", n.kind
   case n.kind:
   of nkEmpty:
     # eg. var s: string
@@ -187,12 +188,28 @@ proc genIdentDefs(w: WasmGen, n: PNode) =
   else:
     internalError("# genIdentDefs error: " & $n[namePos].kind)
 
-proc genBody(w: WasmGen,params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]], n: PNode): WasmNode =
-  result = newWANode(opList)
+proc genBody(w: WasmGen,
+  params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]],
+  n: PNode,
+  hasResult: bool): WasmNode =
+  
+  var 
+    explicitRet = n.kind == nkReturnStmt # wheter there was an explicit return statement
+  result = newOpList()
+  if hasResult:
+    # init the result local to a free space in memory
+    result.sons.add(newSet(woSetLocal, params.len, newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc))))
   for st in n:
     echo "# genBody ", $st.kind
-    #echo treeToYaml st
-    result.sons.add(w.gen(st))
+    explicitRet = st.kind == nkReturnStmt
+    let gs = w.gen(st)
+    if not gs.isNil: result.sons.add(gs)
+  if not explicitRet and hasResult:
+    # this is because sometime the result is appended implicitly, but
+    # we make it explicit for the sake of wasm?
+    result.sons.add(
+      newReturn(newGet(woGetLocal, params.len))
+    )
 
 proc genProc(w: WasmGen, s: PSym) =
   let 
@@ -203,14 +220,12 @@ proc genProc(w: WasmGen, s: PSym) =
   var 
     params = initTable[string,tuple[t: PType, vt:WasmValueType,default:PNode]]()
     res = mapType(s.typ.sons[0])
-    paramTypeList = newSeq[PType]()
   
   for par in fparams.sons[1..^1]:
     if par.kind == nkIdentDefs:
       #echo treeToYaml par
       if par.len > 3:
         for i in 0..<par.len-2: # eg a,b: int
-          paramTypeList.add( par[^2].typ)
           params.add(
             par[i].ident.s, 
             (par[^2].typ, mapType(par[^2].typ), if par[^1].kind!=nkEmpty: par[^1] else: nil ) # FIXME: detect type of param properly
@@ -223,13 +238,11 @@ proc genProc(w: WasmGen, s: PSym) =
           if par[2].kind == nkDotExpr:
             defaultVal = par[2][0]
             typ = defaultVal.typ
-        paramTypeList.add(typ)
         params.add( # a: int
           par[0].ident.s, 
           (typ, mapType(typ), defaultVal) # FIXME: detect type of param properly
         )
     elif par.kind == nkSym:
-      paramTypeList.add( par.sym.typ)
       params.add( # a: int
         par.sym.name.s, 
         (par.sym.typ, mapType(par.sym.typ), par.sym.ast) # FIXME: detect type of param properly
@@ -237,10 +250,20 @@ proc genProc(w: WasmGen, s: PSym) =
     elif par.kind == nkEmpty: continue
     else:
       internalError("# unknown putProc par kind: " & $par.kind)
-      #echo treeToYaml par
-    
+  
+  if not s.typ.sons[0].isNil:
+    # since wasm allows shadowing of params with local vars, this
+    # tries to make sure result gets its very own var after all
+    # params have theirs. Also make the symbol remember it so
+    # we don't need a map from result to its position
+    assert s.ast[resultPos].sym.kind == skResult
+    s.ast[resultPos].sym.position = params.len
+  
+  
   var
     fntype = newType(rs=res)
+  
+  let hasRes = fntype.res != vtNone
 
   for name,val in params:
     if not val.default.isNil:
@@ -273,8 +296,8 @@ proc genProc(w: WasmGen, s: PSym) =
   elif s.flags.contains(sfUsed):
     w.m.functions.add(
       newFunction(
-        w.nextFuncIdx, fntype, w.genBody(params, body),
-        if fntype.res!=vtNone: @[fntype.res] else: nil, 
+        w.nextFuncIdx, fntype, w.genBody(params, body, hasRes),
+        if hasRes: @[fntype.res] else: nil, 
         s.mangleName, s.flags.contains(sfExported)
       )
     )
@@ -440,6 +463,82 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
         w.genSymLoc(n[1].sym)        
       )     
     )
+  of mNewSeq:
+    #echo "# mNewSeq"
+    #echo treeToYaml n
+    # we receive the index to a ptr.We then need to reserve a block of memory for the
+    # len+data of the seq. Since a default len is always know, we can store it.
+    # remember to return the pointer you initially got
+    if not w.generatedProcs.hasKey(s.mangleName):      
+      var magicbody = newOpList(
+        newStore( # store ptr to len
+          memStoreI32,
+          newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc.int32)),
+          0, # offset
+          newGet(woGetLocal, 0)
+        ),
+        newStore( # store len at pointed to
+          memStoreI32,
+          newGet(woGetLocal, 1),
+          0, # offset
+          newLoad(memLoadI32, 0, 1, newGet(woGetLocal, 0))
+        ),
+        newStore( # move heap ptr
+          memStoreI32,
+          newAdd32(
+            newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc.int32)),
+            newAdd32(
+              newConst(wasmPtrSize.int32),
+              newMul32(
+                newConst(n[1].sym.typ.lastSon.getSize.alignTo4.int32),
+                newGet(woGetLocal, 1)
+              )
+            )
+          ),
+          0, newConst(heapPtrLoc.int32)
+        )
+      )
+      
+      w.m.functions.add(
+        newFunction(
+          w.nextFuncIdx, newType(vtNone, vtI32, vtI32), magicbody, nil, s.mangleName,
+          s.flags.contains(sfExported)
+        )
+      )
+      w.generatedProcs.add(s.mangleName, (w.nextFuncIdx,false)) 
+      inc w.nextFuncIdx
+    
+    # the result is in a new piece of memory, so it should be fine to use the heapptrloc?
+    result = newCall(w.generatedProcs[s.mangleName].id, 
+      newLoad(memLOadI32, 0,1, newConst(heapPtrLoc)), # this is not really ideal, it works because we assume
+                                                      # newseq(len):res and so result is at local #1
+      w.gen(n[2]), false
+    )
+    
+  of mNewSeqOfCap:
+    echo "# mNewSeqOfCap"
+    echo treeToYaml n
+    internalError("# TODO: mNewSeqOfCap")
+    # we receive the len of the block to reserve.
+    # Since this proc is completely a magic, we can do everything here.
+    # remember to return the pointer you initially got
+    result = newOpList(
+      newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc.int32)), # this is the returned loc
+      newStore( # move heap ptr
+        memStoreI32,
+        newAdd32(
+          newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc.int32)),
+          newAdd32(
+            newConst(wasmPtrSize.int32),
+            newMul32(
+              newConst(n.typ.getSize.alignTo4.int32),
+              w.gen(n[1])
+            )
+          )
+        ),
+        0, newConst(heapPtrLoc.int32)
+      )
+    )
   else: 
     echo treeToYaml n
     internalError("# callMagic unhandled magic: " & $s.magic)
@@ -462,7 +561,7 @@ proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
     lhsIndex = newLoad(memLoadI32, 0, 1, w.genSymLoc(lhsNode[0].sym))
   of nkSym:
     if lhsNode.sym.kind in {skParam, skResult}:
-      return newSet(woSetLocal, lhsNode.sym.position, w.gen(rhsNode))
+      return newSet(woSetLocal, lhsNode.sym.location, w.gen(rhsNode))
     else:
       lhsIndex = w.genSymLoc(lhsNode.sym)
   of nkDotExpr:
@@ -474,8 +573,24 @@ proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
       lhsOffset = lhsNode[1].sym.offset.int32
     else:
       internalError("genAsgn nkDotExpr error")
+  of nkBracketExpr:
+   # echo treeToYaml lhsNode
+    if lhsNode[0].kind == nkSym:
+      lhsIndex = w.genSymLoc(lhsNode[0].sym)
+    elif lhsNode[0].kind in {nkHiddenDeref, nkDerefExpr}:
+      lhsIndex = newLoad(memLoadI32, 0, 1, w.genSymLoc(lhsNode[0][0].sym))
+    else:
+      internalError("genAsgn nkBracketExpr 0 error")
+
+    lhsIndex = newBinaryOp(
+      ibAdd32, 
+      lhsIndex, 
+      newBinaryOp(
+        ibMul32, w.gen(lhsNode[1]), newConst(lhsNode.typ.getSize().alignTo4)
+      )
+    )
   else: 
-    internalError("unhandled lhs kind " & $lhsNode.kind)
+    internalError("# genAsgn unhandled lhs kind " & $lhsNode.kind)
   
   case lhsNode.typ.kind:
   of tyInt,tyBool,tyInt32, tyEnum, tyChar:
@@ -546,7 +661,7 @@ proc genAccess(w: WasmGen, n: PNode): WasmNode =
 
 
 proc gen(w: WasmGen, n: PNode): WasmNode =
-  echo "# gen ", $n.kind
+  when defined excessive: echo "# gen ", $n.kind
   case n.kind:
   of nkCommentStmt, nkTypeSection, nkPragma, nkEmpty,
     nkTemplateDef, nkProcDef, nkMacroDef, nkIncludeStmt: discard
@@ -587,14 +702,9 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       loadKind = memLoadF64
     elif n.sym.typ.kind == tyFloat32:
       loadKind = memLoadF32
-    #[if n.sym.typ.kind == tyRef:
-      # tyRef generates the location of the pointer, not the location of
-      # the data pointed to. This is to allow to do move the location pointed to
-      # inside the procs, useful eg. for `new`
-      echo "tyRef"
-      result = w.genSymLoc(n.sym)
-    else:]#
     case n.sym.kind:
+    of skParam:
+      result = newGet(woGetLocal, n.sym.location)
     of skEnumField:
       result = newConst(n.sym.position.int32)
     of skResult:
@@ -602,18 +712,18 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       debug n.sym
       echo n.sym.offset
       # todo: n.sym.offset??
-      result = newStore(
-        memStoreI32, newBinaryOp(
-          ibAdd32,
-          newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc)), newConst(n.sym.typ.getSize.alignTo4.int32)
-        ), 0, newConst(heapPtrLoc)
-      )
+      # madness ensues
+      echo "get result at: ", n.sym.location
+      # result already initialized in local
+      # this won't work...
+      result = newGet(woGetLocal, n.sym.location)
     else:
+      echo "sym owner ", n.sym.owner.name.s
       result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
     # FIXME: max uint value is bound by max int value
     # becuase wasm mvp is 32bit only
   of nkBracketExpr:
-    echo treeToYaml n
+    #echo treeToYaml n
     result = w.genAccess(n)
   of nkStmtList:
     result = newOpList()
@@ -723,9 +833,10 @@ proc myClose(graph: ModuleGraph; b: PPassContext, n: PNode): PNode =
         else: getCurrentDir() / options.outFile
       else:
         changeFileExt(completeCFilePath(f), ext)
-    encode(w.m).writeTo(outfile)
     linkPass(outfile, w)  
     writeFile(outfile.changeFileExt("json"), render(w.m))
+    encode(w.m).writeTo(outfile)
+    
     
 
 proc myOpenCached(graph: ModuleGraph; s: PSym, rd: PRodReader): PPassContext =
