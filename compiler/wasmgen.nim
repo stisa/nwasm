@@ -471,17 +471,11 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
     # remember to return the pointer you initially got
     if not w.generatedProcs.hasKey(s.mangleName):      
       var magicbody = newOpList(
-        newStore( # store ptr to len
-          memStoreI32,
-          newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc.int32)),
-          0, # offset
-          newGet(woGetLocal, 0)
-        ),
         newStore( # store len at pointed to
           memStoreI32,
           newGet(woGetLocal, 1),
           0, # offset
-          newLoad(memLoadI32, 0, 1, newGet(woGetLocal, 0))
+          newGet(woGetLocal, 0)
         ),
         newStore( # move heap ptr
           memStoreI32,
