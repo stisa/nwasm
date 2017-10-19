@@ -29,7 +29,7 @@ proc mapType*(tt:PType):WasmValueType =
   #  tyString, tyPointer, tySequence, tyArray, tyProc,
   #  tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
   of tyBool,tyChar, tyInt..tyInt32, tyUint..tyUint32,
-    tyString, tyPtr, tyRef, tyObject, tySet:
+    tyString, tyPtr, tyRef, tyObject, tySet, tySequence:
     result = vtI32
   of tyFloat32:
     result = vtF32

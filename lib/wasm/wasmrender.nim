@@ -4,7 +4,7 @@ import strutils
 # Render our custom wasm ast to a json-like readable format.
 # This is a naive implementation with lots of string copying, so it's slow.
 
-proc render(n: WasmNode, indlv = 0): string
+proc render*(n: WasmNode, indlv = 0): string
 
 proc render(v: WasmValueType): string = "\"" & ($v)[2..^1] & "\""
 proc render(v: seq[WasmValueType]): string =
@@ -41,10 +41,11 @@ proc render(t: WasmType, indlv = 0): string =
   result = """{ "params": $1, "result": $2 }""" % [pars, res]
   result = result.indent(indlv)
 
-proc render(sn: seq[WasmNode], indlv = 0): string =
+proc render*(sn: seq[WasmNode], indlv = 0): string =
   if sn.isNil or sn.len == 0: return "[]"
   var sons = ""
-  for i, s in sn: 
+
+  for i, s in sn:
     add sons, render(s,indlv)
     if i != sn.len-1: add sons, ",\n"
 
@@ -54,7 +55,7 @@ $1
   
 
 
-proc render(n: WasmNode, indlv = 0): string =
+proc render*(n: WasmNode, indlv = 0): string =
   case n.kind:
   of woBlock, woLoop, woIf: 
     #sig*: WasmValueType # vtNone === Pseudo

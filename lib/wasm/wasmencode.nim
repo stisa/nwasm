@@ -294,7 +294,7 @@ proc encode(op: WasmNode): seq[byte] =
   of woGetGlobal, woGetLocal:
     add result, encode(op.kind)
     add result, op.index.int32.unsignedLEB128
-  of woSetGlobal, woSetLocal:
+  of woSetGlobal, woSetLocal, woTeeLocal:
     add result, encode(op.a)    
     add result, encode(op.kind)
     add result, op.index.int32.unsignedLEB128

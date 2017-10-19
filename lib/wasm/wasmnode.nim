@@ -15,6 +15,16 @@ proc newBinaryOp*(op:WasmOpKind,a,b:WasmNode):WasmNode =
   result.a = a
   result.b = b
 
+proc newAdd32*(a,b:WasmNode):WasmNode =
+  result = newWANode(ibAdd32)
+  result.a = a
+  result.b = b
+
+proc newMul32*(a,b:WasmNode):WasmNode =
+  result = newWANode(ibMul32)
+  result.a = a
+  result.b = b
+
 proc newCall*(idx:int,args:varargs[WasmNode], isImport: bool = false):WasmNode =
   result = newWANode(woCall)
   result.funcIndex = idx
@@ -27,6 +37,11 @@ proc newLoad*(op:WasmOpKind, offset, alignment: Natural=1,idx:WasmNode):WasmNode
   result.align = ceil(log2(abs(alignment).float)).int
   result.offset = offset
   result.a = idx
+
+proc newTeeLocal*(idx: int, what: WasmNode): WasmNode =
+  result = newWANode(woTeeLocal)
+  result.index = idx
+  result.a = what
 
 proc newGet*(op:WasmOpKind,idx:int):WasmNode =
   assert op in {woGetGlobal,woGetLocal}
