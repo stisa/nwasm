@@ -1,19 +1,13 @@
-proc check[T](x:T) {.header:"glue", importc:"assert".}
+proc log[T](x:T) {.header:"glue", importc:"log".}
 
-type A = ref object
-  id: int
-  f: float32
+var a = 12.3
+proc d(a:float):float =
+  result = a+12.4
 
-var 
-  b : A
-new b
-check(high(b.id) == 2147483647)
-check(low(b.id) == -2147483648 )
+  result = result*result
 
-var ar  = [1.0'f32,2,3]
+  result = result/23
 
-check(low(ar)==0) # 0
-check(high(ar)==2) # 2
+  log a
 
-check(ar[low(ar)] == 1.0) # 1.0
-check(ar[high(ar)] == 3.0) # 3.0
+log d(a)

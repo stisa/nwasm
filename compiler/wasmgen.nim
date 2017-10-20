@@ -199,12 +199,13 @@ proc genIdentDefs(w: WasmGen, n: PNode) =
 proc genBody(w: WasmGen,
   params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]],
   n: PNode,
-  hasResult: bool): WasmNode =
+  resType: PType): WasmNode =
   
   var 
     explicitRet = n.kind == nkReturnStmt # wheter there was an explicit return statement
   result = newOpList()
-  if hasResult:
+  if resType.kind in NilableTypes+ConstantDataTypes:
+    # This is wrong, as 
     # init the result local to a free space in memory
     result.sons.add(newSet(woSetLocal, params.len, newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc))))
   for st in n:
@@ -212,7 +213,7 @@ proc genBody(w: WasmGen,
     explicitRet = st.kind == nkReturnStmt
     let gs = w.gen(st)
     if not gs.isNil: result.sons.add(gs)
-  if not explicitRet and hasResult:
+  if not explicitRet and result != nil:
     # this is because sometime the result is appended implicitly, but
     # we make it explicit for the sake of wasm?
     result.sons.add(
@@ -271,8 +272,6 @@ proc genProc(w: WasmGen, s: PSym) =
   var
     fntype = newType(rs=res)
   
-  let hasRes = fntype.res != vtNone
-
   for name,val in params:
     if not val.default.isNil:
       echo "# TODO: need to init result"
@@ -304,8 +303,8 @@ proc genProc(w: WasmGen, s: PSym) =
   elif s.flags.contains(sfUsed):
     w.m.functions.add(
       newFunction(
-        w.nextFuncIdx, fntype, w.genBody(params, body, hasRes),
-        if hasRes: @[fntype.res] else: nil, 
+        w.nextFuncIdx, fntype, w.genBody(params, body, s.typ.sons[0]),
+        if fntype.res != vtNone: @[fntype.res] else: nil, 
         s.mangleName, s.flags.contains(sfExported)
       )
     )
