@@ -753,6 +753,7 @@ type
     flags*: TLocFlags         # location's flags
     lode*: PNode              # Node where the location came from; can be faked
     r*: Rope                  # rope value of location (code generators)
+    p*: BiggestInt            # integer value of location
 
   # ---------------- end of backend information ------------------------------
 
