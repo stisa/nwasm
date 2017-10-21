@@ -82,12 +82,14 @@ proc genSymLoc(w: WasmGen, s: PSym): WasmNode =
   assert s.offset >= 0, "uninitialized location for: " & s.name.s
   result = newConst(s.offset)
 
-proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
+proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int): WasmNode =
   # a var section stores its data in `data` or has an
   # initialization expr, so no node is returned.
   #echo treeToYaml n
   var dataseg: seq[byte] = newSeq[byte]()
-  echo "# store ", n.kind
+  echo "# store ", n.kind #, " owner: ", $owner.name.s
+  result = newOpList()
+  
   case n.kind:
   of nkEmpty:
     # eg. var s: string
@@ -118,15 +120,6 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
       dataseg = (memIndex+wasmPtrSize).uint32.toBytes & n.strVal.len.uint32.toBytes & n.strVal.toBytes
     else:
       dataseg = (memIndex+wasmPtrSize).uint32.toBytes & n.strVal.len.uint32.toBytes
-  of nkAddr:
-    dataseg.setLen(wasmPtrSize)
-    w.initExprs.add(
-      newStore(
-        memStoreI32,
-        w.genSymLoc(n[0].sym),
-        0'i32, newConst(memIndex)
-      )
-    )
   of nkObjConstr:
     var tmpMemIdx = memIndex
     for i, colonexpr in n:
@@ -135,20 +128,14 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
         es = colonexpr[0].sym
         t = colonexpr[1].typ
       tmpMemIdx = memIndex+es.offset
-      w.store(t, colonexpr[1], tmpMemIdx)
+      let gn = w.store(t, colonexpr[1], tmpMemIdx)
+      if not gn.isNil: result.sons.add(gn)
   of nkNilLit:
     dataseg.setLen(n.typ.getSize.alignTo4)
-  of nkSym:
-    w.initExprs.add( # FIXME: does this work for every symbol?
-      newStore(
-        n.typ.mapStoreKind,
-        w.gen(n),
-        0'i32, newConst(memIndex)
-      )
-    )
   of nkBracket:
     for val in n:
-      w.store(val.typ, val, memIndex)
+      let gn = w.store(val.typ, val, memIndex)
+      if not gn.isNil: result.sons.add(gn)
   of nkCurly:
     echo memIndex
     # this is a set. This means each val in n is either a (u)int8 or (u)int16
@@ -156,19 +143,29 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
     dataseg.setLen(4)
     for val in n:
       dataseg[val.intVal.int32 div 32] = dataseg[val.intVal.int32 div 32] or (1 shl (val.intVal mod 32)).uint8
-  of nkCallKinds:
-    # echo treeToYaml n, n.typ.getSize.alignTo4
-    dataseg.setLen(n.typ.getSize.alignTo4)
-    #if n[0].sym.magic != mNone:
-    #  w.initExprs.add(w.callMagic(n[0].sym, n))
-    #else:
-    w.initExprs.add( # TODO: mmh
+  of nkAddr:
+    dataseg.setLen(wasmPtrSize)
+    result = newStore(
+      memStoreI32,
+      w.genSymLoc(n[0].sym),
+      0'i32, newConst(memIndex)
+    )
+  of nkSym:
+    result = # FIXME: does this work for every symbol?
       newStore(
         n.typ.mapStoreKind,
         w.gen(n),
         0'i32, newConst(memIndex)
       )
-    )
+  of nkCallKinds:
+    # echo treeToYaml n, n.typ.getSize.alignTo4
+    dataseg.setLen(n.typ.getSize.alignTo4)    
+    result = # TODO: mmh
+      newStore(
+        n.typ.mapStoreKind,
+        w.gen(n),
+        0'i32, newConst(memIndex)
+      )
   of nkExprColonExpr:
     internalError("TODO: genIdentDefs: initialize " & $n.kind)
   else:
@@ -179,28 +176,11 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int) =
   else:
     memIndex = ( memIndex + typ.size ).alignTo4
 
-proc genIdentDefs(w: WasmGen, n: PNode) =
-  # a var section stores its data in `data` or has an
-  # initialization expr, so no node is returned.
-  #echo treeToYaml n
-  if n[namePos].kind == nkSym: # Top level symbols/sections
-    let
-      s = n[namePos].sym
-      typ = if n[1].typ != nil: n[1].typ.skipTypes({tyGenericInst, tyTypeDesc}) else: n[2].typ.skipTypes({tyGenericInst})
-    
-    s.offset = w.nextMemIdx # initialize the position in memory of the symbol
-    
-    assert(typ.kind in ConcreteTypes, $typ.kind & "\n" & $treeToYaml(n))
-    
-    w.store(typ, n[2], w.nextMemIdx)
-  else:
-    internalError("# genIdentDefs error: " & $n[namePos].kind)
-
 proc genBody(w: WasmGen,
   params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]],
   n: PNode,
   resType: PType): WasmNode =
-  
+  echo treeToYaml n
   var 
     explicitRet = n.kind == nkReturnStmt # wheter there was an explicit return statement
   result = newOpList()
@@ -208,18 +188,30 @@ proc genBody(w: WasmGen,
     # This is wrong, as 
     # init the result local to a free space in memory
     result.sons.add(newSet(woSetLocal, params.len, newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc))))
-  for st in n:
-    echo "# genBody ", $st.kind
-    explicitRet = st.kind == nkReturnStmt
-    let gs = w.gen(st)
-    if not gs.isNil: result.sons.add(gs)
+  
+  if n.kind == nkStmtList:
+    for st in n:
+      echo "# genBody ", $st.kind
+      explicitRet = st.kind == nkReturnStmt
+      let gs = w.gen(st)
+      if not gs.isNil: result.sons.add(gs)
+  elif n.kind == nkReturnStmt and n[0].typ.kind == tyStmt: 
+    # The child of the result stmt doesn't return anything in wasm terms.
+    # So we generate the child and force the return of result.
+    # eg nkReturn[nkAsgn], for wasm nkAsgn doesn't generate a return,
+    # so it would generate return[void]
+    explicitRet = false
+    result.sons.add(w.gen(n[0]))
+  else:
+    # single stmt 
+    result.sons.add(w.gen(n))
+    #internalError("# genbody parent node kind: " & $n.kind)
   if not explicitRet and result != nil:
     # this is because sometime the result is appended implicitly, but
     # we make it explicit for the sake of wasm?
     result.sons.add(
       newReturn(newGet(woGetLocal, params.len))
     )
-
 proc genProc(w: WasmGen, s: PSym) =
   let 
     fparams = s.typ.n
@@ -271,7 +263,7 @@ proc genProc(w: WasmGen, s: PSym) =
   
   var
     fntype = newType(rs=res)
-  
+  echo "res: ", typeToYaml s.typ.sons[0]
   for name,val in params:
     if not val.default.isNil:
       echo "# TODO: need to init result"
@@ -767,7 +759,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
   of nkBracketExpr:
     #echo treeToYaml n
     result = w.genAccess(n)
-  of nkStmtList:
+  of nkStmtList, nkStmtListExpr:
     result = newOpList()
     for stm in n:
       let gn = w.gen(stm)
@@ -775,8 +767,24 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
   of nkVarSection, nkLetSection, nkConstSection:
     #echo treeToYaml n
     echo "# genVarSection" #TODO
+    result = newOpList()
     for iddef in n.sons:
-      w.genIdentDefs(iddef)
+      if iddef[namePos].kind == nkSym: # Top level symbols/sections
+        let
+          s = iddef[namePos].sym
+          typ = if iddef[1].typ != nil: iddef[1].typ.skipTypes({tyGenericInst, tyTypeDesc}) else: iddef[2].typ.skipTypes({tyGenericInst})
+        
+        s.offset = w.nextMemIdx # initialize the position in memory of the symbol
+        
+        assert(typ.kind in ConcreteTypes, $typ.kind & "\n" & $treeToYaml(iddef))
+        if s.owner.kind == skModule:
+          w.initExprs.add(w.store(typ, iddef[2], w.nextMemIdx))
+        elif s.owner.kind == skProc:
+          result.sons.add(w.store(typ, iddef[2], w.nextMemIdx))
+        else:
+          internalError("# genIdentDefs error: " & $n[namePos].kind)
+      else:
+        internalError("# genIdentDefs loop error: " & $n[namePos].kind)
   of nkDerefExpr, nkHiddenDeref:
     #echo treeToYaml n
     var loadKind : WasmOpKind = memLoadI32
