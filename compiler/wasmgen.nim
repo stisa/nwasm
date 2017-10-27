@@ -177,7 +177,8 @@ proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int): WasmNode =
     memIndex = ( memIndex + typ.size ).alignTo4
 
 proc genBody(w: WasmGen,
-  params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]],
+  #params:Table[string,tuple[t: PType, vt:WasmValueType,default:PNode]],
+  params: openArray[WasmValueType],
   n: PNode,
   resType: PType): WasmNode =
   echo treeToYaml n
@@ -219,35 +220,23 @@ proc genProc(w: WasmGen, s: PSym) =
     body = s.getBody()
   
   var 
-    params = initTable[string,tuple[t: PType, vt:WasmValueType,default:PNode]]()
+    params = newSeq[WasmValueType](fparams.sons.len-1)#initTable[string,tuple[t: PType, vt:WasmValueType,default:PNode]]()
     res = mapType(s.typ.sons[0])
   
-  for par in fparams.sons[1..^1]:
+  for i, p in params.mpairs:
+    let par = fparams[i+1]
     if par.kind == nkIdentDefs:
-      #echo treeToYaml par
       if par.len > 3:
         for i in 0..<par.len-2: # eg a,b: int
-          params.add(
-            par[i].ident.s, 
-            (par[^2].typ, mapType(par[^2].typ), if par[^1].kind!=nkEmpty: par[^1] else: nil ) # FIXME: detect type of param properly
-          )
+          p = mapType(par[^2].typ)
       else:
-        var 
-          defaultVal : PNode
-          typ: PType = par[1].typ
+        var typ: PType = par[1].typ
         if par[2].kind != nkEmpty:
           if par[2].kind == nkDotExpr:
-            defaultVal = par[2][0]
-            typ = defaultVal.typ
-        params.add( # a: int
-          par[0].ident.s, 
-          (typ, mapType(typ), defaultVal) # FIXME: detect type of param properly
-        )
+            typ = par[2][0].typ
+        p = mapType(typ)
     elif par.kind == nkSym:
-      params.add( # a: int
-        par.sym.name.s, 
-        (par.sym.typ, mapType(par.sym.typ), par.sym.ast) # FIXME: detect type of param properly
-      )
+      p = mapType(par.sym.typ)
     elif par.kind == nkEmpty: continue
     else:
       internalError("# unknown putProc par kind: " & $par.kind)
@@ -264,10 +253,8 @@ proc genProc(w: WasmGen, s: PSym) =
   var
     fntype = newType(rs=res)
   echo "res: ", typeToYaml s.typ.sons[0]
-  for name,val in params:
-    if not val.default.isNil:
-      echo "# TODO: need to init result"
-    fntype.params.add(val.vt)
+  for val in params:
+    fntype.params.add(val)
   
   if s.flags.contains(sfImportc):
     # it's an imported proc
@@ -367,7 +354,9 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
   of BinaryMagic:
     return newBinaryOp(getMagicOp(s.magic), w.gen(n[1]), w.gen(n[2]))
   of FloatsMagic:
-    if n.typ.kind == tyFloat32:
+    if n.typ.kind == tyFloat32 or 
+      (n.typ.kind == tyBool and n[1].typ.kind == tyFloat32): 
+      # the bool part is because otherwise 1'f32+2.0 would use f32 arithm
       return newBinaryOp(getFloat32Magic(s.magic), w.gen(n[1]), w.gen(n[2]))
     else:
       return newBinaryOp(getMagicOp(s.magic), w.gen(n[1]), w.gen(n[2]))
@@ -469,14 +458,17 @@ proc callMagic(w: WasmGen, s: PSym, n: PNode): WasmNode =
         newStore(
           t.mapStoreKind,
           w.gen(n[2]), 0'i32, newConst((w.nextMemIdx+t.getSize.alignTo4).int32)
-        )
+        ),
+        newLoad(t.mapLoadKind, 0, 1, newConst(w.nextMemIdx.int32))  # FIXME: this shouldn't be necessary
+                                                                    # basically, load and store in itself       
       )
     else:
       result = newOpList(
         newStore(
           t.mapStoreKind,
           w.gen(n[1]), 0'i32, newConst((w.nextMemIdx+t.getSize.alignTo4).int32)
-        )
+        ),
+        newLoad(t.mapLoadKind, 0, 1, newConst(w.nextMemIdx.int32))
       )
   of mSizeOf:
     result = newConst(n[1].typ.getSize.alignTo4.int32)
@@ -819,7 +811,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       internalError("nkDotExpr n[0] kind: " & $n[0].kind) 
   of nkAsgn:
     result = w.genAsgn(n[0], n[1])
-  of nkHiddenStdConv:
+  of nkHiddenStdConv, nkConv:
     #echo "nkHiddenStdConv for " & $n.typ.kind
     var convOP: WasmOpKind
     case n[1].typ.mapType:
@@ -856,6 +848,10 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       result = w.gen(n[1]) 
     else:
       result = newUnaryOp(convOp, w.gen(n[1]))
+  of nkBlockStmt:
+    result = w.gen(n[1])
+  of nkWhileStmt:
+    result = newWhileLoop(w.gen(n[0]), w.gen(n[1]))
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)

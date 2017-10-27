@@ -8,5 +8,5 @@ var x = A(c: 1.2)
 
 var y = A(b:13, c: 1.4)
 
-check(x.c == 1.2)
+check(x.c - 1.2 < 0.01) # due to imprecision in promoting f32 to f64
 check(y.b == 13)

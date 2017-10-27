@@ -15,4 +15,4 @@ new c
 c = b
 c.f = 3.14'f32
 check(c.id == 13)
-check(c.f == 3.14)
+check(c.f == 3.14'f32)
