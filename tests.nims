@@ -6,4 +6,5 @@ withDir "test":
       echo "Testing " & $file
       echo "------------------------------------"
       exec basePath / "Nim" / "bin" / "nim_temp.exe" & " wasm -d:wast -r " & file
-      
+      echo "End Testing " & $file
+      echo "^----------------^------------------^"
