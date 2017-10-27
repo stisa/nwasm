@@ -3,6 +3,19 @@ NWAsm
 
 Experimenting with a webassembly backend for nim.  
 Currently tryign to get `system.nim` to compile, roughly 1200 lines out of 4000 work.
+Trying out
+----------
+Short version: you can't yet. I still need to push a compatible `system.nim`
+Once I'll have that done, you can:
+- clone this repo
+- `cd <yourRepoFolder>`
+- set `basePath` in `nim.cfg` to `<yourRepoFolder>`
+- `git clone https://github.com/nim-lang/Nim`
+- copy `compiler/` into `Nim` (overwriting files)
+- copy `config/` into `Nim` (overwriting files)
+- `nim e build.nims`
+- `nim e test.nims`
+
 
 Ramblings
 ---------
