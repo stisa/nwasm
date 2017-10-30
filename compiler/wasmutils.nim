@@ -29,7 +29,8 @@ proc mapType*(tt:PType):WasmValueType =
   #  tyString, tyPointer, tySequence, tyArray, tyProc,
   #  tyOrdinal, tyVar, tyOpenArray, tyObject, tyChar:
   of tyBool,tyChar, tyInt..tyInt32, tyUint..tyUint32,
-    tyString, tyPtr, tyRef, tyPointer, tyObject, tySet, tySequence:
+    tyString, tyPtr, tyRef, tyPointer, tyObject, tySet,
+    tySequence, tyEnum:
     result = vtI32
   of tyFloat32:
     result = vtF32
@@ -54,7 +55,7 @@ proc mapLoadKind*(tt:PType): WasmOpKind =
   of vtF32: result = memLoadF32
   of vtF64: result = memLoadF64
   else:
-    internalError("unmapped load for type: " & $tt.kind)
+    internalError("unmapped load " & $mapType(tt) & " for type: " & $tt.kind)
     
 
 

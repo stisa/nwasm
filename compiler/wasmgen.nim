@@ -74,13 +74,17 @@ proc fillLoc(a: var TLoc, k: TLocKind, lode: PNode, p: BiggestInt, s: TStorageLo
     if a.p == -1: a.p = p
 ]#
 proc genSymLoc(w: WasmGen, s: PSym): WasmNode =
-  #let t = s.typ.skipTypes(abstractVarRange)
-  #case t.kind:
-  #of tyString, tyRef, tyPtr, tyPointer:
-  #  result = newLoad(memLoadI32, 0, 1, newConst(s.offset.int32))
-  #else:
-  assert s.offset >= 0, "uninitialized location for: " & s.name.s
-  result = newConst(s.offset)
+  echo "sym ", s.name.s," owner ", s.owner.name.s
+  echo "pos ", s.position, " offset ", s.offset
+  debug s #FIXME: s is not b when instatiating contains
+  case s.kind:
+  of skParam:
+    echo "experiment: genSymParam"
+    result = newGet(woGetLocal, s.position)
+  else:
+    assert s.offset >= 0, "uninitialized location for: " & s.name.s & " from " & s.owner.name.s
+    result = newConst(s.offset)
+  if s.offset<0: echo "something wrong above"
 
 proc store(w: WasmGen, typ: PType, n: PNode,  memIndex: var int): WasmNode =
   # a var section stores its data in `data` or has an
@@ -181,7 +185,7 @@ proc genBody(w: WasmGen,
   params: openArray[WasmValueType],
   n: PNode,
   resType: PType): WasmNode =
-  echo treeToYaml n
+  #echo treeToYaml n
   var 
     explicitRet = n.kind == nkReturnStmt # wheter there was an explicit return statement
   result = newOpList()
@@ -193,6 +197,7 @@ proc genBody(w: WasmGen,
   if n.kind == nkStmtList:
     for st in n:
       echo "# genBody ", $st.kind
+      echo treetoyaml st
       explicitRet = st.kind == nkReturnStmt
       let gs = w.gen(st)
       if not gs.isNil: result.sons.add(gs)
@@ -579,13 +584,14 @@ proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
   # - a[b] = c
   # - strings, seq (they copy, so data(a) = data(c) but addr a != addr c)
   #echo treeToYaml lhsNode
-  echo lhsNode.kind #, " - ", lhsNode.typ.kind 
+  echo "# genAsgn ", lhsNode.kind #, " - ", lhsNode.typ.kind 
   case lhsNode.kind
   of nkDerefExpr: 
     # index is the location pointed to
     lhsIndex = newLoad(memLoadI32, 0, 1, w.genSymLoc(lhsNode[0].sym))
   of nkSym:
     if lhsNode.sym.kind in {skParam, skResult}:
+      #echo "rhsn",treeToYaml rhsNode
       return newSet(woSetLocal, lhsNode.sym.position, w.gen(rhsNode))
     else:
       lhsIndex = w.genSymLoc(lhsNode.sym)
@@ -711,22 +717,17 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       
     if isMagic:
       echo "ismagic ", $s.magic
-    
+  
       return w.callMagic(s, n)
     elif not w.generatedProcs.hasKey(s.mangleName):
       w.genProc(s)
     var args = newSeq[WasmNode]()
     for i in 1..<n.sons.len:
-      #echo "gencall ",i,treeToYaml n
+      echo "gencall ",i,treeToYaml n
       args.add(gen(w,n[i]))
     let (idx, isImport) = w.generatedProcs[s.mangleName] 
     result = newCall(idx, args, isImport)
   of nkSym:
-    var loadKind : WasmOpKind = memLoadI32
-    if n.sym.typ.kind in {tyFloat,tyFloat64}:
-      loadKind = memLoadF64
-    elif n.sym.typ.kind == tyFloat32:
-      loadKind = memLoadF32
     case n.sym.kind:
     of skParam:
       result = newGet(woGetLocal, n.sym.position)
@@ -743,9 +744,14 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       # this won't work...
       result = newGet(woGetLocal, n.sym.position)
     else:
-      echo "sym ", n.sym.name.s," owner ", n.sym.owner.name.s
+      echo "gen sym ", n.sym.name.s," owner ", n.sym.owner.name.s
+      echo "gen pos ", n.sym.position, " offset ", n.sym.offset
       debug n.sym
-      result = newLoad(loadKind, 0, 1, w.genSymLoc(n.sym))
+      echo "gen typ ", n.sym.typ.skipTypes(abstractInst).kind
+      if n.sym.typ.skipTypes(abstractInst).kind in passedAsBackendPtr:
+        result = w.genSymLoc(n.sym)
+      else:
+        result = newLoad(mapLoadKind(n.sym.typ), 0, 1, w.genSymLoc(n.sym))
     # FIXME: max uint value is bound by max int value
     # becuase wasm mvp is 32bit only
   of nkBracketExpr:

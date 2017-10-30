@@ -3,7 +3,7 @@ from math import log2,ceil
 proc signedLEB128* (value:int32|uint32):seq[byte] =
   # TODO: fix signed leb for value < -128
   var 
-    val = value
+    val: int32 = value
     # log2 is expensive, could be replace by a lookup table
     more = true
     isNegative = (value < 0)
@@ -19,7 +19,7 @@ proc signedLEB128* (value:int32|uint32):seq[byte] =
     val = val shr 7
     if isNegative:
       # extend sign
-      val = (val or ((not(0) shl (size - 7)))).int32
+      val = (val or ((not(0'i32) shl (size - 7'i32)))).int32
     # sign bit of byte is second high order bit
     if ((val == 0 and ((b and 0x40) == 0)) or ((val == -1 and ((b and 0x40) == 0x40)))):
         # calculation is complete

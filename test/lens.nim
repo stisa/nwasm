@@ -1,4 +1,4 @@
-proc log[T](x:T) {.header:"glue", importc:"log".}
+proc check[T](x:T) {.header:"glue", importc:"assert".}
 var c = newSeq[int](3)
 c[1] = 123
 c[2] = 456
@@ -11,7 +11,7 @@ var e = [1,2,3]
 
 var f = "hell"
 
-log len(c) #3
-log len(d) #4
-log len(e) #3
-log len(f) #4
+check len(c) == 3
+check len(d) == 4
+check len(e) == 3
+check len(f) == 4

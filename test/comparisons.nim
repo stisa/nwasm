@@ -1,46 +1,45 @@
-proc log* [T](x:T) {.used, header:"glue", importc:"log".}
-
+proc check[T](x:T) {.header:"glue", importc:"assert".}
 type A = enum
   aa, ab, ac
 
 var 
   a = ab
   b = aa
-log(a <= b)
-log(a <= ab)
+check(not(a <= b))
+check(a <= ab)
 
 var
   pa = addr a
   pb = addr b
-log(pa <= pb)
+check(pa <= pb)
 
 var
   sa = "hello"
   sb = "world"
-log(sa <= sb)
+check(sa <= sb)
 
 var
   ca = 'x'
   cb = 'y'
-log(ca <= cb)
+check(ca <= cb)
 
 var
   ba = true
   bb = false
-log(ba <= bb)
+check(not(ba <= bb))
 
 var 
   ta = {aa,ab}
   tb = {ac}
-log(ta == tb)
+check(not(ta == tb))
 
 var
   ra : ref int
   rb : ref int
 new ra
 new rb
-log(ra <= rb)
+check(ra <= rb)
 ra = rb
-log(ra < rb)
+check(not(ra < rb))
 
 #[Mising: EqProc]#
