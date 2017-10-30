@@ -196,8 +196,8 @@ proc genBody(w: WasmGen,
   
   if n.kind == nkStmtList:
     for st in n:
-      echo "# genBody ", $st.kind
-      echo treetoyaml st
+      #echo "# genBody ", $st.kind
+      #echo treetoyaml st
       explicitRet = st.kind == nkReturnStmt
       let gs = w.gen(st)
       if not gs.isNil: result.sons.add(gs)
@@ -858,6 +858,19 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     result = w.gen(n[1])
   of nkWhileStmt:
     result = newWhileLoop(w.gen(n[0]), w.gen(n[1]))
+  of nkIfStmt:
+    #echo "nkIfstmt",treeToYaml n
+    # ifstmt are recursive for now
+    result = newWaNode(woNop)
+    
+    for bidx in countdown(n.sonsLen-1,0):
+      #result = gen else1
+      #result2 = gen if1 else result1
+      #result3 = gen if2 else result2
+      if n[bidx].kind == nkElse:
+        result = w.gen(n[bidx][0])
+      else:
+        result = newIfElse(w.gen(n[bidx][0]),w.gen(n[bidx][1]), result)
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)

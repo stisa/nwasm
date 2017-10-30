@@ -115,11 +115,13 @@ proc newIf*(cond:WasmNode, then:WasmNode #[, other:WasmNode=nil]#):WasmNode =
   result.sig = ltPseudo
   result.a = cond
   result.b = then
-  #ifstmt.sons.add(then)
-  #if other!=nil: # else block
-  #  ifstmt.sons.add(newElse(other))
-  #ifstmt.sons.add(newEnd())
-  #result.sons.add(ifstmt)
+
+proc newIfElse*(cond:WasmNode, then:WasmNode, other:WasmNode):WasmNode =
+  result = newWANode(opList)
+  result.sons.add(newIf(cond, then))
+  if other.kind != woNop:
+    result.sons.add(newElse(other))
+  result.sons.add(newEnd())
 
 proc newOpList*(ops: varargs[WasmNode]): WasmNode =
   result = newWANode(opList)
