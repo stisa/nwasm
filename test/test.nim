@@ -14,8 +14,5 @@ var ar  = [0.0'f32,1,2]
 type R = object
   a: range[1..12]
 
-var r = R(a:3)
-if r.a < 0: log 123
-elif r.a > 3: log 456
-else: log 789
-#log cmp(r.a, high(ar))
+var r = R(a:1)
+log cmp(r.a, high(ar))

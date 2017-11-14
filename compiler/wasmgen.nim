@@ -193,11 +193,10 @@ proc genBody(w: WasmGen,
     # This is wrong, as 
     # init the result local to a free space in memory
     result.sons.add(newSet(woSetLocal, params.len, newLoad(memLoadI32, 0, 1, newConst(heapPtrLoc))))
-  
   if n.kind == nkStmtList:
     for st in n:
-      #echo "# genBody ", $st.kind
-      #echo treetoyaml st
+      echo "# genBody ", $st.kind
+      echo treetoyaml st
       explicitRet = st.kind == nkReturnStmt
       let gs = w.gen(st)
       if not gs.isNil: result.sons.add(gs)
@@ -257,7 +256,7 @@ proc genProc(w: WasmGen, s: PSym) =
   
   var
     fntype = newType(rs=res)
-  echo "res: ", typeToYaml s.typ.sons[0]
+  #echo "res: ", typeToYaml s.typ.sons[0]
   for val in params:
     fntype.params.add(val)
   
@@ -677,15 +676,17 @@ proc genAccess(w: WasmGen, n: PNode): WasmNode =
     symIndex = w.accessLocAux(n[0])
     accPos = w.gen(n[1])
     t = n.typ
-    accIndex = newBinaryOp(
-      ibAdd32, 
-      symIndex, 
-      newBinaryOp(
-        ibMul32,
-        accPos, newConst(t.getSize().alignTo4.int32)
-      )
+  var accIndex = newBinaryOp(
+    ibAdd32, 
+    symIndex, 
+    newBinaryOp(
+      ibMul32,
+      accPos, newConst(t.getSize().alignTo4.int32)
     )
-  echo "genaccess", mapType(t)
+  )
+  #if not t.isNil and not t.lastSon.isNil and t.lastSon.kind in {tySequence, tyString}:
+  #  accIndex = newAdd32(accIndex, newConst(4'i32)) # due to len taking 4 bytes
+  echo "genaccess ", t.kind, " ", mapType(t)
   case mapType(t):
   of vtI32: result = newLoad(memLoadI32, 0 , 1, accIndex)
   of vtF32: result = newLoad(memLoadF32, 0 , 1, accIndex)
@@ -723,7 +724,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
       w.genProc(s)
     var args = newSeq[WasmNode]()
     for i in 1..<n.sons.len:
-      echo "gencall ",i,treeToYaml n
+      #echo "gencall ",i,treeToYaml n
       args.add(gen(w,n[i]))
     let (idx, isImport) = w.generatedProcs[s.mangleName] 
     result = newCall(idx, args, isImport)
@@ -756,6 +757,7 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     # becuase wasm mvp is 32bit only
   of nkBracketExpr:
     #echo treeToYaml n
+    # FIXME: seq, string have len at pos 0
     result = w.genAccess(n)
   of nkStmtList, nkStmtListExpr:
     result = newOpList()
@@ -795,7 +797,13 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
     )
   of nkReturnStmt:
     if n[0].kind == nkEmpty:
+      echo "FIXME: return getlocal 0 hardcoded"
       result = newReturn(newGet(woGetLocal, 0)) # return 0th local (I assume that's `result`)
+    if n[0].kind == nkAsgn:
+      result = newOpList( # FIXME: flimsy
+        w.gen(n[0]),
+        newReturn(newGet(woGetLocal, n[0][0].sym.position))
+      )
     else:
       result = newReturn(w.gen(n[0]))
   of nkDotExpr:
