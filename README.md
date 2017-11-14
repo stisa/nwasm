@@ -1,8 +1,8 @@
 NWAsm
 =====
-
 Experimenting with a webassembly backend for nim.  
 Currently tryign to get `system.nim` to compile, roughly 1200 lines out of 4000 work.
+
 Trying out
 ----------
 Short version: you can't yet. I still need to push a compatible `system.nim`
