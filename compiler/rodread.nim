@@ -90,7 +90,7 @@
 
 import
   os, options, strutils, nversion, ast, astalgo, msgs, platform, condsyms,
-  ropes, idents, securehash, idgen, types, rodutils, memfiles, tables
+  ropes, idents, std / sha1, idgen, types, rodutils, memfiles, tables
 
 type
   TReasonForRecompile* = enum ## all the reasons that can trigger recompilation
@@ -336,10 +336,13 @@ proc decodeType(r: PRodReader, info: TLineInfo): PType =
   if r.s[r.pos] == '\17':
     inc(r.pos)
     result.assignment = rrGetSym(r, decodeVInt(r.s, r.pos), info)
-  while r.s[r.pos] == '\18':
+  if r.s[r.pos] == '\18':
+    inc(r.pos)
+    result.sink = rrGetSym(r, decodeVInt(r.s, r.pos), info)
+  while r.s[r.pos] == '\19':
     inc(r.pos)
     let x = decodeVInt(r.s, r.pos)
-    doAssert r.s[r.pos] == '\19'
+    doAssert r.s[r.pos] == '\20'
     inc(r.pos)
     let y = rrGetSym(r, decodeVInt(r.s, r.pos), info)
     result.methods.safeAdd((x, y))
@@ -583,7 +586,7 @@ proc cmdChangeTriggersRecompilation(old, new: TCommands): bool =
   # new command forces us to consider it here :-)
   case old
   of cmdCompileToC, cmdCompileToCpp, cmdCompileToOC,
-      cmdCompileToJS, cmdCompileToPHP, cmdCompileToLLVM, cmdCompileToWASM:
+      cmdCompileToJS, cmdCompileToPHP, cmdCompileToLLVM, cmdCompileToWasm:
     if new in {cmdDoc, cmdCheck, cmdIdeTools, cmdPretty, cmdDef,
                cmdInteractive}:
       return false
@@ -792,7 +795,7 @@ proc getReader(moduleId: int): PRodReader =
   # the module ID! We could introduce a mapping ID->PRodReader but I'll leave
   # this for later versions if benchmarking shows the linear search causes
   # problems:
-  for i in 0 .. <gMods.len:
+  for i in 0 ..< gMods.len:
     result = gMods[i].rd
     if result != nil and result.moduleID == moduleId: return result
   return nil
@@ -810,6 +813,7 @@ proc rrGetSym(r: PRodReader, id: int, info: TLineInfo): PSym =
         encodeVInt(id, x)
         internalError(info, "missing from both indexes: +" & x)
       var rd = getReader(moduleID)
+      doAssert rd != nil
       d = iiTableGet(rd.index.tab, id)
       if d != InvalidKey:
         result = decodeSymSafePos(rd, d, info)
@@ -858,12 +862,11 @@ proc loadMethods(r: PRodReader) =
     if r.s[r.pos] == ' ': inc(r.pos)
 
 proc getHash*(fileIdx: int32): SecureHash =
-  internalAssert fileIdx >= 0 and fileIdx < gMods.len
-
-  if gMods[fileIdx].hashDone:
+  if fileIdx <% gMods.len and gMods[fileIdx].hashDone:
     return gMods[fileIdx].hash
 
   result = secureHashFile(fileIdx.toFullPath)
+  if fileIdx >= gMods.len: setLen(gMods, fileIdx+1)
   gMods[fileIdx].hash = result
 
 template growCache*(cache, pos) =
@@ -909,7 +912,7 @@ proc checkDep(fileIdx: int32; cache: IdentCache): TReasonForRecompile =
 
 proc handleSymbolFile*(module: PSym; cache: IdentCache): PRodReader =
   let fileIdx = module.fileIdx
-  if optSymbolFiles notin gGlobalOptions:
+  if gSymbolFiles in {disabledSf, writeOnlySf, v2Sf}:
     module.id = getID()
     return nil
   idgen.loadMaxIds(options.gProjectPath / options.gProjectName)
@@ -1234,4 +1237,4 @@ proc viewFile(rodfile: string) =
   outf.close
 
 when isMainModule:
-  viewFile(paramStr(1).addFileExt(rodExt))
+  viewFile(paramStr(1).addFileExt(RodExt))
