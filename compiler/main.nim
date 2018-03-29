@@ -201,9 +201,9 @@ proc mainCommand*(graph: ModuleGraph; cache: IdentCache) =
   of "js", "compiletojs":
     gCmd = cmdCompileToJS
     commandCompileToJS(graph, cache)
-    of "wasm":
-      gCmd = cmdCompileToWasm
-      commandCompileToWasm(graph,cache)
+  of "wasm":
+    gCmd = cmdCompileToWasm
+    commandCompileToWasm(graph,cache)
   of "php":
     gCmd = cmdCompileToPHP
     commandCompileToJS(graph, cache)

@@ -1,8 +1,7 @@
 import ospaths
 
-const basePath {.strdefine.} : string = "."
-withDir "Nim":
-  exec basePath / "Nim" / "koch.exe" & " temp -d:debug"
+const basePath {.strdefine.} : string = ".."
+exec "koch" & " temp -d:debug"
 
 withDir "test":
   var file: string = "test"
@@ -10,6 +9,6 @@ withDir "test":
   file = file.changeFileExt("nim")
   echo "Running " & $file
   echo "------------------------------------"
-  exec basePath / "Nim" / "bin" / "nim_temp.exe" & " wasm -d:wast -r " & file
+  exec basePath / "bin" / "nim_temp" & " wasm -d:wast -r " & file
   echo "------------------------------------"
   exec "wasm2wast nimcache/" / file.changeFileExt("wasm")

@@ -1,20 +1,20 @@
 import
-  ../Nim/compiler/[ast, astalgo, types, sighashes, msgs, wordrecg, trees, ropes]
+  ast, astalgo, types, sighashes, msgs, wordrecg, trees, ropes
 
 import md5
 
-from wasmast import WasmValueType, WasmOpKind
+from wasm/wasmast import WasmValueType, WasmOpKind
 
 from strutils import toHex, Digits
 
 proc getPragmaStmt*(n: PNode, w: TSpecialWord): PNode =
   case n.kind
   of nkStmtList:
-    for i in 0 .. < n.len:
+    for i in 0..<n.len:
       result = getPragmaStmt(n[i], w)
       if result != nil: break
   of nkPragma:
-    for i in 0 .. < n.len:
+    for i in 0..<n.len:
       if whichPragma(n[i]) == w: return n[i]
   else: discard
 

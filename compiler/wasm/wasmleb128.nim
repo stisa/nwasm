@@ -29,10 +29,10 @@ proc signedLEB128* (value:int32|uint32):seq[byte] =
     if result.isnil: result = @[b.byte]
     else: add result, b.byte
 
-proc unsignedLEB128* (value:int32|uint32, padding:int=0):seq[byte] =
+proc unsignedLEB128* [T:int32|uint32](value: T, padding:int=0):seq[byte] =
   var
     val = value
-    b = 0
+    b = 0.T
     pad = padding
   # no padding unless specified
   b = val and 127

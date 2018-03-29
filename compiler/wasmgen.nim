@@ -1,14 +1,14 @@
 import
-  ../Nim/compiler/[ast, astalgo, options, msgs, magicsys, idents, types, passes, rodread,
-  ropes, wordrecg,extccomp],
+  ast, astalgo, options, msgs, magicsys, idents, types, passes, rodread,
+  ropes, wordrecg,extccomp,
   ospaths, tables, os, strutils,
-  wasmast, wasmstructure, wasmencode, wasmnode, wasmleb128, wasmrender, wasmutils
+  wasm/[wasmast, wasmstructure, wasmencode, wasmnode, wasmleb128, wasmrender], wasmutils
 
 from math import ceil,log2
 
-from ../Nim/compiler/modulegraphs import ModuleGraph
+from modulegraphs import ModuleGraph
 
-include "../lib/wasm/wasmglue.templ" # TODO: check out how nimdoc does overloading of template
+include "wasm/wasmglue.templ" # TODO: check out how nimdoc does overloading of template
 
 type
   WasmGen = ref object of TPassContext
@@ -879,6 +879,9 @@ proc gen(w: WasmGen, n: PNode): WasmNode =
         result = w.gen(n[bidx][0])
       else:
         result = newIfElse(w.gen(n[bidx][0]),w.gen(n[bidx][1]), result)
+  of nkDiscardStmt:
+    if n.sons[0].kind != nkEmpty:
+      internalError("TODO: evaluate discarded statement")
   else:
     #echo $n.kind
     internalError("missing gen case: " & $n.kind)
@@ -902,7 +905,7 @@ proc putInitFunc(w: WasmGen) =
   inc w.nextFuncIdx
 #-------------linker-----------------------------------#
 proc linkPass(mainModuleFile:string, w:WasmGen) =
-  echo "genloaders..."
+  echo "genloaders..." & mainModuleFile
   #TODO: allow user defined glue
   if optRun in gGlobalOptions:
     # generate a js file suitable to be run by node
@@ -940,6 +943,7 @@ proc myClose(graph: ModuleGraph; b: PPassContext, n: PNode): PNode =
       else:
         changeFileExt(completeCFilePath(f), ext)
     linkPass(outfile, w)  
+    echo "out" & outfile
     writeFile(outfile.changeFileExt("json"), render(w.m))
     encode(w.m).writeTo(outfile)
     
