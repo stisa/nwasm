@@ -1,0 +1,119 @@
+#? stdtmpl | standard
+#proc generateJSGlue(name: string): string =
+#  result = ""
+function toJSStr(ptr){
+    // takes a ptr into memory, reads the first 4 bytes to determine
+    // the length of the string, then return the string
+    var initialOffset = ptr+4
+    var lenarr = $$${name}.memory.slice(ptr,ptr+4)
+    var len = (new Uint32Array(lenarr.buffer))[0]
+    var asciiPart = new Array(len);
+    var fcc = String.fromCharCode;
+    var nonAsciiPart = null;
+    var nonAsciiOffset = 0;
+    for (var i = initialOffset; i < initialOffset+len; ++i) {
+        if (nonAsciiPart !== null) {
+            var offset = (i - nonAsciiOffset) * 2;
+            var code = $$${name}.memory[i].toString(16);
+            if (code.length == 1) {
+            code = "0"+code;
+            }
+            nonAsciiPart[offset] = "%";
+            nonAsciiPart[offset + 1] = code;
+        }
+        else if ($$${name}.memory[i] < 128)
+            asciiPart[i] = fcc($$${name}.memory[i]);
+        else {
+            asciiPart.length = i;
+            nonAsciiOffset = i;
+            nonAsciiPart = new Array((len - i) * 2);
+            --i;
+        }
+    }
+    asciiPart = asciiPart.join("");
+    return (nonAsciiPart === null) ?
+        asciiPart : asciiPart + decodeURIComponent(nonAsciiPart.join(""));
+}
+function rawEcho(){
+    var buf = "";
+    for (var i = 0; i < arguments.length; ++i) {
+        buf += toJSStr(arguments[i]);
+    }
+    console.log(buf);
+}
+#end proc
+#
+#proc generateLoader(name: string): string =
+#  result = ""
+<html>
+    <head>
+        <meta charset="UTF-8">
+    </head> 
+    <body>
+        <div>
+            Look in the console and check out the <code>$$${name}</code> variable.
+            <br>
+            eg. <code>$$${name}.exports._memory</code> or <code>$$${name}.exports.myfunc</code>
+        </div>
+        <script>
+            var nimWasmImports = {
+                glue: {
+                    log: function(arg){
+                        console.log(arg)
+                    },
+                    assert: function(arg){
+                        console.assert(arg)
+                    },
+                    rawEcho: function(strptr) {
+                    rawEcho(strptr)
+                    }
+                }
+            };
+            var $$${name} = {};
+            fetch('${name}.wasm').then(response =>
+                response.arrayBuffer()
+                ).then(bytes =>
+                WebAssembly.instantiate(bytes,nimWasmImports)
+                ).then(results => {
+                    $$${name}.module = results.module
+                    $$${name}.memory = new Uint8Array(results.instance.exports.$$memory.buffer)
+                    $$${name}.exports = results.instance.exports
+                    $$${name}.exports.nimInit() // call the init proc, like calling main in C
+            });
+        </script>
+        <script>${generateJSGlue(name)}</script>
+    </body>
+</html>
+# end proc
+#
+#proc generateNodeLoader(name: string): string =
+#  result = ""
+var fs = require('fs')
+var path = require('path')
+var root = path.dirname(require.main.filename);
+
+var nimWasmImports = {
+    glue: {
+        log: function(arg){
+            console.log(arg)
+        },
+        assert: function(arg){
+            console.assert(arg)
+        },
+        rawEcho: function(strptr) {
+        rawEcho(strptr)
+        }
+    }
+};
+var $$${name} = {};
+/* FIXME: wrong path */
+var buf = fs.readFileSync(root+'/${name}.wasm')
+
+WebAssembly.instantiate(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), nimWasmImports).then(results => {
+    $$${name}.module = results.module
+    $$${name}.memory = new Uint8Array(results.instance.exports.$$memory.buffer)
+    $$${name}.exports = results.instance.exports
+    $$${name}.exports.nimInit() // call the init proc, like calling main in C
+});
+${generateJSGlue(name)}
+# end proc

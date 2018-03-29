@@ -82,7 +82,7 @@ proc handleCmdLine(cache: IdentCache; config: ConfigRef) =
         if gCmd == cmdRun:
           tccgen.run(commands.arguments)
       if optRun in gGlobalOptions:
-        if gCmd == cmdCompileToJS:
+        if gCmd == cmdCompileToJS or gCmd == cmdCompileToWasm:
           var ex: string
           if options.outFile.len > 0:
             ex = options.outFile.prependCurDir.quoteShell
