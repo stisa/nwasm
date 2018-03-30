@@ -12,3 +12,6 @@ Then `myProcess` is called for every top level statement, and is where the ast o
 Lastly, `myClose` is called, which closes the module.
 
 These passages are repeated for all modules used by the project.
+
+Here's a simplified graph:
+![flow](flow.jpg)
