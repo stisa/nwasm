@@ -1,8 +1,60 @@
 
 Ramblings
----------
-This section contains random thoughts on how I should implement the codegen. Why? Because I like to write
-my ideas down, it helps me think. *Warning*: hobby, self-taught "programmer".
+=========
+
+This section contains random thoughts on how I should implement the codegen.   
+Why? Because I felt like writing my ideas down, as I was starting to forget my choices.  
+
+See [notes](NOTES.md) for a general idea of how I understand the compiler generation pass works. 
+
+Please note that this document is pretty rough, I may start talking about something and get sidetracked. I'll try to keep rewriting sections of it until it makes sense, so if you have questions or find something unclear, please write and issue or notify me some other way.
+
+Overview
+--------
+
+First of all, only _ONE_ wasm module is produced. Much like it happens with the js backend, only the functions actually called in the _main_ module are compiled.  
+As an example, lets say we have module A with 100 procs, and the main module B which imports module A and calls a single function, lets say `a`. Only the proc `a` is actually produced in the wasm module.
+```nim
+# module A
+proc a(x: int): int = x*2
+#proc b...
+#...proc hundred
+
+# module B
+import A
+var x = 123
+echo a(x)
+```
+Once `echo a(x)` reaches `myProcess`, and the function `a` goes in `gen`, we have 3 possibilities:
+1. `a` is a magic proc
+2. `a` is a proc we already generated
+3. `a` is a proc we need to generate
+
+Lets see these cases:
+1. each magic is a bit different and is handled in `callMagic`
+2. lucky! Do nothing
+3. the proc generation happens in `genProc`
+
+After this, the arguments are generated and lastly the call is generated. Note we distinguish imported (from js) procs as they are hoisted in the function index space, so the index needs to be adjusted in the generation pass. I don't particularly like this coupling, but it's the simplest way I could think of. 
+
+Every var/let/const` section is handled in `gen` (TODO: move to its own proc?).
+The single variables are stored sequentially in linear memory. The position in memory is saved in `symbol.offset` (FIXME: for now). 
+We then have two possibilities:
+1. the owner of the symbol is a module ( `=>` top level)
+2. the owner is a proc ( `=>` definition is inside a proc)
+
+In case **1**, we store the var linearly in the data section of the wasm module. 
+As an example, let's consider `var x: seq[int32]`. Notice I didn't initialize the seq.
+We reserve the space of the pointer to the length of the seq (4bytes for now). The initialization of 
+the seq will store a length+data pair, sequentially, on the linear memory and update the pointer reserved
+before to point to the length. Strings, refs and pointers work in a similar way.
+Now lets consider a concrete value, eg `var x: int32`. This will reserve 4 bytes of linear memory, and is
+functionally equivalent to `var x: int32 = 0`.
+This happens in `gen` and `store` (and is also probably one of the worst designed parts, so help welcome in specifying this).
+Note the `symbol.offset` is set to the linear memory index of the start of the value, eg a `ref` will have it set to the first byte
+of the pointer, while a concrete value will have it set to the first byte of the concrete value.
+
+Case **2** is still in flux.
 
 ### Exceptions
 Should I forward exceptions to the js side, eg. by a `throw toJsStr(<wasmstringmessage>)`, or just `trap` in wasm?
@@ -48,3 +100,8 @@ something. Also because by then I should have a rough implementation of most com
 break everything by writing a bunch of test importing `console.assert` and feeding them to a `nodejs` runner.
 
 
+Inspirations
+------------
+Some links that may prove helpful:
+
+- [Go approach to WAsm](https://docs.google.com/document/d/131vjr4DH6JFnb-blm_uRdaC0_Nv3OUwjEY5qVCxCup4/preview#)
