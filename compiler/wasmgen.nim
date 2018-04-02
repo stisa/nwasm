@@ -647,12 +647,18 @@ proc genAsgn(w: WasmGen, lhsNode, rhsNode: PNode): WasmNode =
     internalError("# genAsgn missing case: " & $lhsNode.typ.kind)
 
 proc accessLocAux(w: WasmGen, n: PNode): WasmNode =
+  echo "accessLocAuX---<"
+  echo treeToYaml n
   case n.kind
   of nkDerefExpr: 
     # index is the location pointed to
     result = newLoad(memLoadI32, 0, 1, w.genSymLoc(n[0].sym))
   of nkSym:
-    result = w.genSymLoc(n.sym)
+    if n.sym.typ.kind in {tySequence, tyString}:
+      # local of length + 4
+      result = newAdd32(w.genSymLoc(n.sym), newConst(wasmPtrSize.int32)) 
+    else:
+      result = w.genSymLoc(n.sym)
   of nkDotExpr:
     if n[0].kind == nkSym:
       result = newBinaryOp(

@@ -1214,3 +1214,7 @@ proc cmp*[T](x, y: T): int {.procvar.} =
   if x == y: return 0
   if x < y: return -1
   return 1
+
+# TODO: later, 2933
+#proc cmp*(x, y: string): int {.noSideEffect, procvar.}
+#  ## Compare proc for strings. More efficient than the generic version.

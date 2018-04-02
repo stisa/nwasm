@@ -43,3 +43,10 @@ ra = rb
 check(not(ra < rb))
 
 #[Mising: EqProc]#
+type R = object
+  a: range[1..12]
+
+var 
+  ar  = [0.0'f32,1,2]
+  r = R(a:2)
+check(cmp(r.a, high(ar))==0)
