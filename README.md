@@ -3,10 +3,24 @@ NWAsm
 Experimenting with a webassembly backend for nim.  
 Currently trying to get `system.nim` to compile, roughly 1200 lines out of 4000 work.
 
+This repository is used for documentation, issue tracking, and other misc things.
+The actual code can be found in a fork of Nim here: https://github.com/stisa/Nim/tree/nwasm
+
+This split-branch model was chosen to allow easy comparison with the main nim branch
+via github fork interface, simple compilation (see [Trying out](#trying-out)). 
+Also if/when, in the future, the wasm backend is mature enough, merging into upstream would
+be a simple pull request.
+
+Notes
+-----
+
+I'm writing some [notes](NOTES.md) on how (*I think*) nim compiler works and also random thoughts on how to implement
+the backend.
+
 Trying out
 ----------
-- Clone: `git clone https://github.com/stisa/nwasm`
-- `cd nwasm` 
+- Clone: `git clone -b nwasm --single-branch https://github.com/stisa/Nim`
+- `cd Nim` 
 - Compile koch `nim c -d:release koch.nim`
 - Compile a test version with wasm support `koch temp -d:debug`
 
@@ -16,8 +30,4 @@ together with a `.html` file with some glue code.
 
 Passing `-r` when compiling will generate a `.js` file that will be run with nodejs.
 
-Some files you can run are in [tests/wasm](tests/wasm).
-
-A nimscript file is provided for convenience, to run tests inside `tests/wasm`. cd to the root of this project and `nim e run <nameoftest.nim>`.
-
-See also [ramblings](RAMBLINGS.md) for some random thoughts and [notes](NOTES.md) for some notes on how (*I think*) nim compiler works.
+Some files you can run are in [tests/wasm](https://github.com/stisa/Nim/tree/nwasm/tests/wasm).
