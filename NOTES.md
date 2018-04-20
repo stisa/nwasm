@@ -26,7 +26,7 @@ A simplified graph:
 Overview
 --------
 
-The main idea behind this backend is to transform nim ast into "wasm" ast. This ast is defined in [compiler/wasm/wasmast](compiler/wasm/wasmast.nim), and doesn't follow a standard, at least for now. 
+The main idea behind this backend is to transform nim ast into "wasm" ast. This ast is defined in [compiler/wasm/wasmast](https://github.com/stisa/Nim/tree/nwasm/compiler/wasm/wasmast.nim), and doesn't follow a standard, at least for now. 
 The generation is divided in 2 main phases:
 1. nim ast -> wasm ast
 2. wasm ast -> bytecode
@@ -35,6 +35,16 @@ The first phase happens in `wasmgen`, and is the actual backend nim sees.
 The other phase happens in `wasmencode` and is mostly decoupled from the previous, meaning that it could be "easily" changed to output wast (wasm textual representation), an html page with inlined js and wasm as an array of uint8, ..., etc.
 
 Another module that may be of interest is `wasmrender`, which tries to print out a json-like representation of the wasm ast.
+
+### File list
+Most of the relevant files are either in a wasm folder or have wasm in the name (wasmgen wasmutil wasmsys...) , the changes to other files are just one or two lines to make nim recognize wasm as a target. The actual wasm translation is only in `wasmgen`, and I substitute `wasmsys.nim` to `system.nim` so I can try out changes incrementally, before implementing the whole thing.
+
+- `compiler/wasm` contains wasm ast definition, along with some convenience procs, json-like renderer, encoder to wasm bytecode etc
+- `compiler/wasm/wasmglue.tmpl` contains the templates for html and js parts of the generator. The Js part is used when passing `-r` to run via nodejs
+- `compiler/wasmgen.nim` (and `wasmutils.nim`) is the code generation pass
+- `lib/system/wasmsys.nim` is the `system` module the wasm backend uses, so we can implement `system` little by little. Will eventually go away once wasm can compile the full system module
+- `tests/wasm` contains some tests, that may be run with nodejs (`nim wasm -r <test.nim>`)
+
 
 Nim to Wasm
 -----------
