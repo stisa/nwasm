@@ -25,8 +25,7 @@ Trying out
 - Compile a test version with wasm support `koch temp -d:debug`
 
 If everything goes well, you will find `nim_temp` inside `bin`. You can use this to compile to wasm,
-eg: `./bin/nim_temp wasm <file.nim>` and you will find your wasm file inside `nimcache`,  
-together with a `.html` file with some glue code. 
+eg: `./bin/nim_temp wasm <file.nim>` and you will find your wasm file inside `nimcache`, together with a `.html` file with some glue code. 
 
 Note: If `koch` complains about `ast.nim` not being unique, try doing `koch boot` first.
 
@@ -38,9 +37,9 @@ Contributing
 ------------
 
 This project is very much WIP. Main goal for now is to compile the full `system.nim`. The `gc` implementation should
-probably follow the `asm.js` one.
-If you would like to contribute to the code generation, first of all, thank you! If you implement some proc or feature, please 
-also add some (simple) tests in [tests/wasm](https://github.com/stisa/Nim/tree/nwasm/tests/wasm).
-Since `assert` is not currently implemented, you can make do with js's `assert`, eg `proc check[T](x:T) {.header:"glue", importc:"assert".}`.
+probably follow the `asm.js` one.  
+If you would like to contribute to the code generation, first of all, thank you!  
+If you implement some proc or feature, please also add some (simple) tests in [tests/wasm](https://github.com/stisa/Nim/tree/nwasm/tests/wasm).  
+Since `assert` is not currently implemented, you can make do with js's `assert`, eg `proc check[T](x:T) {.header:"glue", importc:"assert".}`.  
 If your implementation is particularly complex, please consider also adding an explanation in the notes.
 
