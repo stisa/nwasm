@@ -15,7 +15,7 @@ This pass is composed of 4 procs, normally called ``myOpen, myOpenCached, myClos
 These four procs operate on (the same) context object, that generally holds a rope structure which holds the target code generated.
 
 `myOpen` receives the module symbol and is the place in which the context is initialized.   
-Then `myProcess` is called for every top level statement, and is where the ast of the statement is converted to target source code (usually by a proc named ``gen``).  
+Then `myProcess` is called for every top level statement, and is where the ast of the statement is converted to target source code (usually by a proc named `gen`).  
 Lastly, `myClose` is called, which closes the module.
 
 These passages are repeated for all modules used by the project.
@@ -64,7 +64,7 @@ Lets see these cases:
 
 After this, the arguments are generated and lastly the call is generated. Note we distinguish imported (from js) procs as they are hoisted in the function index space, so the index needs to be adjusted in the generation pass. I don't particularly like this coupling, but it's the simplest way I could think of. 
 
-Every var/let/const` section is handled in `gen` (TODO: move to its own proc?).
+Every `var/let/const` section is handled in `gen` (TODO: move to its own proc?).
 The single variables are stored sequentially in linear memory. The position in memory is saved in `symbol.offset` (FIXME: for now). 
 We then have two possibilities:
 1. the owner of the symbol is a module ( `=>` top level)
