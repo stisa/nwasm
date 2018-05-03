@@ -6,16 +6,14 @@ Currently trying to get `system.nim` to compile, roughly 1200 lines out of 4000 
 This repository is used for documentation, issue tracking, and other misc things.
 The actual code can be found in a fork of Nim [here](https://github.com/stisa/Nim/tree/nwasm)
 
-This split-branch model was chosen to allow easy comparison with the main nim branch
-via github fork interface, simple compilation (see [Trying out](#trying-out)). 
-Also if/when, in the future, the wasm backend is mature enough, merging into upstream would
-be a simple pull request.
+This split-branch model was chosen to allow easy comparison with the main nim
+ branch via github fork interface and also simple compilation (see [Trying out](#trying-out)). 
+Also if/when, in the future, the wasm backend is mature enough, merging into upstream would be a simple pull request.
 
 Notes
 -----
 
-I'm writing some [notes](NOTES.md) on how (*I think*) nim compiler works and also random thoughts on how to implement
-the backend.
+I've been writing some [notes](NOTES.md) on how (*I think*) nim compiler works and also random thoughts on how to implement the backend.
 
 Trying out
 ----------
@@ -33,6 +31,9 @@ Passing `-r` when compiling will generate a `.js` file that will be run with nod
 
 Some files you can run are in [tests/wasm](https://github.com/stisa/Nim/tree/nwasm/tests/wasm).
 
+The glue code and loaders are found in [nimwasm.cfg](https://github.com/stisa/Nim/blob/nwasm/config/nimwasm.cfg), the idea is to make it similar to the template used for `nim doc`, allowing users to change it
+by writing their own `nimwasm.cfg` in their project root.
+
 Contributing
 ------------
 
@@ -43,3 +44,4 @@ If you implement some proc or feature, please also add some (simple) tests in [t
 Since `assert` is not currently implemented, you can make do with js's `assert`, eg `proc check[T](x:T) {.header:"glue", importc:"assert".}`.  
 If your implementation is particularly complex, please consider also adding an explanation in the notes.
 
+See also the [github project](https://github.com/stisa/nwasm/projects/1) for some ideas on what to do.
