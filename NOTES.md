@@ -145,3 +145,4 @@ Some links that may prove helpful:
 - [wat2wasm](https://cdn.rawgit.com/WebAssembly/wabt/aae5a4b7/demo/wat2wasm/)
 - [wasm2wat](https://cdn.rawgit.com/WebAssembly/wabt/aae5a4b7/demo/wasm2wat/)
 - [spec](https://webassembly.github.io/spec/core/index.html)
+- [wee_alloc](http://fitzgeraldnick.com/2018/02/09/wee-alloc.html)
