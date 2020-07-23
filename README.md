@@ -15,6 +15,9 @@ Notes
 
 I've been writing some [notes](NOTES.md) on how (*I think*) nim compiler works and also random thoughts on how to implement the backend.
 
+The [TODO](TODO.md) tracks the progress through the `system.nim` file.  
+My goal is to be able to compile it fully (or as much as makes sense for a browser).
+
 Trying out
 ----------
 - Clone: `git clone -b nwasm --single-branch https://github.com/stisa/Nim nwasm`
@@ -23,11 +26,9 @@ Trying out
 - Compile a test version with wasm support `koch temp -d:debug`
 
 If everything goes well, you will find `nim_temp` inside `bin`. You can use this to compile to wasm,
-eg: `./bin/nim_temp wasm <file.nim>` and you will find your wasm file inside `nimcache`, together with a `.html` file with some glue code. 
+eg: `nim_temp wasm <file.nim>` (assuming the "./Nim/bin/" folder is in path) and you will find your wasm file, together with a `.html` file with some glue code. 
 
-Note: If `koch` complains about `ast.nim` not being unique, try doing `koch boot` first.
-
-Passing `-r` when compiling will generate a `.js` file that will be run with nodejs.
+Passing `-r` when compiling will also generate a `.js` file that will be run with nodejs.
 
 Some files you can run are in [tests/wasm](https://github.com/stisa/Nim/tree/nwasm/tests/wasm).
 
