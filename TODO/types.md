@@ -1,10 +1,10 @@
 ## Types
 
-- [ ]  float
-- [ ]  float32
-- [ ]  float64
+- [x]  float
+- [x]  float32
+- [x]  float64
 
-- [ ]  char
+- [x]  char
 - [ ]  string
 - [ ]  cstring
 
@@ -14,10 +14,10 @@
 - [ ]  `ref`
 - [ ]  void
 
-- [ ]  int
+- [x]  int
 - [ ]  int8
 - [ ]  int16
-- [ ]  int32
+- [x]  int32
 - [ ]  int64
 - [ ]  uint
 - [ ]  uint8
