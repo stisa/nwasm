@@ -16,6 +16,12 @@ These four procs operate on (the same) context object, that generally holds a ro
 
 `myOpen` receives the module symbol and is the place in which the context is initialized.   
 Then `myProcess` is called for every top level statement, and is where the ast of the statement is converted to target source code (usually by a proc named `gen`).  
+Node kinds that may appear here (may not be inclusive):
+```
+nnkStmtList
+nnkRoutineKinds(procdef, etc)
+nnkInclude, nnkImport, nnkExport
+```
 Lastly, `myClose` is called, which closes the module.
 
 These passages are repeated for all modules used by the project.
@@ -27,7 +33,7 @@ Overview
 --------
 
 The main idea behind this backend is to transform nim ast into "wasm" ast. This ast is defined in [compiler/wasm/wasmast](https://github.com/stisa/Nim/tree/nwasm/compiler/wasm/wasmast.nim), and doesn't follow a standard, at least for now. 
-The generation is divided in 2 main phases:
+The wasm generation is divided in 2 main phases:
 1. nim ast -> wasm ast
 2. wasm ast -> bytecode
 
@@ -37,13 +43,12 @@ The other phase happens in `wasmencode` and is mostly decoupled from the previou
 Another module that may be of interest is `wasmrender`, which tries to print out a json-like representation of the wasm ast.
 
 ### File list
-Most of the relevant files are either in a wasm folder or have wasm in the name (wasmgen wasmutil wasmsys...) , the changes to other files are just one or two lines to make nim recognize wasm as a target. The actual wasm translation is only in `wasmgen`, and I substitute `wasmsys.nim` to `system.nim` so I can try out changes incrementally, before implementing the whole thing.
+Most of the relevant files are either in a wasm folder or have wasm in the name (wasmgen wasmutil wasmsys...) , the changes to other files are just one or two lines to make nim recognize wasm as a target. The actual wasm translation is only in `wasmgen`.
 
 - `compiler/wasm` contains wasm ast definition, along with some convenience procs, json-like renderer, encoder to wasm bytecode etc
 - `compiler/wasm/wasmglue.tmpl` contains the templates for html and js parts of the generator. The Js part is used when passing `-r` to run via nodejs
 - `compiler/wasmgen.nim` (and `wasmutils.nim`) is the code generation pass
-- `lib/system/wasmsys.nim` is the `system` module the wasm backend uses, so we can implement `system` little by little. Will eventually go away once wasm can compile the full system module
-- `tests/wasm` contains some tests, that may be run with nodejs (`nim wasm -r <test.nim>`)
+- `tests/wasm` contains some tests, that may be run with testament (`testament cat wasm`??)
 
 
 Nim to Wasm
@@ -74,24 +79,43 @@ Lets see these cases:
 
 After this, the arguments are generated and lastly the call is generated. Note we distinguish imported (from js) procs as they are hoisted in the function index space, so the index needs to be adjusted in the generation pass. I don't particularly like this coupling, but it's the simplest way I could think of. 
 
-Every `var/let/const` section is handled in `gen` (TODO: move to its own proc?).
-The single variables are stored sequentially in linear memory. The position in memory is saved in `symbol.offset` (FIXME: for now). 
-We then have two possibilities:
+Every `var/let/const` section is handled in `gen`.  
+Top level (ie. `sym.parent.kind == skModule`) definitions are declared as wasm globals. The `sym.loc.pos` is the index into global space, and the k is `locGlobalVar`.
+Proc level (ie `sym.parent.kind == skProc`) definitions go into local space. The sym.loc.pos is the index into locals space.
+Note: locals and arguments are ~same in wasm. This means that, for a proc
+```nim
+proc sum(a,b:int) =
+  var s = a+b
+  echo s
+```
+`a`,`b` are respectively `0, 1` in the local space, while `s` should be `3`.
+
+For numeric types, this is pretty easy as they can be cleanly mapped to wasm types.  
+For the rest, we have two possibilities:
 1. the owner of the symbol is a module ( `=>` top level)
 2. the owner is a proc ( `=>` definition is inside a proc)
 
-In case **1**, we store the var linearly in the data section of the wasm module. 
+In case **1**, we store the var linearly in the data section of the wasm module, and store the adress of the first
+byte in the global.
 As an example, let's consider `var x: seq[int32]`. Notice I didn't initialize the seq.
-We reserve the space of the pointer to the length of the seq (4bytes for now). The initialization of 
-the seq will store a length+data pair, sequentially, on the linear memory and update the pointer reserved
-before to point to the length. Strings, refs and pointers work in a similar way.
-Now lets consider a concrete value, eg `var x: int32`. This will reserve 4 bytes of linear memory, and is
-functionally equivalent to `var x: int32 = 0`.
-This happens in `gen` and `store` (and is also probably one of the worst designed parts, so help welcome in specifying this).
-Note the `symbol.offset` is set to the linear memory index of the start of the value, eg a `ref` will have it set to the first byte
-of the pointer, while a concrete value will have it set to the first byte of the concrete value.
+The pointer to the length of the seq is stored in a global (as `i32`). In this case, since the seq is `nil`, it is just 0.
+The initialization of the seq will store a length+data pair, sequentially, on the linear memory and update the pointer reserved
+before to point to the length. Strings, arrays, object, refs and pointers work in a similar way.
+for sets, assume they're small enough to fit in a int32.
 
 Case **2** is still in flux.
+The idea is to do the same as case 1, but substituting locals to globals. We should also keep track of the index in linear memory we were at when we went in the proc, and clear out the memory between that index and current index once we exit the proc ( or dont? we can just roll back the stackpointer and avoid assuming memory is all 0 on gen)
+
+#### Result
+
+In case the proc defines a result, add an implicit result local to procs. 
+(ie if the result wasmtype != vtnone)
+ideas for this:
+1) This result local should be a pointer
+to a memory location outside the proc. This means the wasm functions don't actually return a value, but merely modify the 
+value that is injected.
+2) A local, with the typ defined as the type of the result var. From the pow of the rest, this just means that local 0 is the result, and everything happens normally. When exiting the proc, a `return result` is added (why isn't this there anyway? bah nim ast is super weird, I thought the return result was injected somewhere in the previous passes). This also means I need to inject a 0 value with appropiate type when generating the call, and sliding back the stackptr to free up stuff won't work, unless I make it ignore memory used by the result, but this will leave holes. God do I need a gc? :(
+
 
 ### Exceptions
 Should I forward exceptions to the js side, eg. by a `throw toJsStr(<wasmstringmessage>)`, or just `trap` in wasm?
@@ -146,3 +170,6 @@ Some links that may prove helpful:
 - [wasm2wat](https://cdn.rawgit.com/WebAssembly/wabt/aae5a4b7/demo/wasm2wat/)
 - [spec](https://webassembly.github.io/spec/core/index.html)
 - [wee_alloc](http://fitzgeraldnick.com/2018/02/09/wee-alloc.html)
+- https://www.assemblyscript.org/editor.html
+- https://webassembly.github.io/wabt/demo/wat2wasm/index.html
+- https://github.com/WebAssembly/design/blob/master/BinaryEncoding.md
