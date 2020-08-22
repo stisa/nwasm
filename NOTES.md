@@ -5,6 +5,10 @@ This document contains random thoughts and notes on how I should implement the c
 
 Please note that this document is *very* WIP, I may start talking about something and get sidetracked. I'll try to keep rewriting sections of it until it makes sense, so if you have questions or find something unclear, please write an issue or notify me some other way.
 
+### Compiling
+```
+.\\bin\\nim_temp.exe wasm -r --gc:none -d:noSignalHandler -d:debug .\\bin\\test.nim ```   
+
 Codegen pass
 ------------
 
@@ -160,6 +164,13 @@ after I get to around half of `system.nim`, just to avoid having that nice feeli
 something. Also because by then I should have a rough implementation of most comparisons for ints, so I can ensure I don't
 break everything by writing a bunch of test importing `console.assert` and feeding them to a `nodejs` runner.
 
+## Testament
+Remember to do `koch temp` before this.
+```bash
+cd .\testament
+nim c -d:release testament.nim
+.\testament.exe --nim:"..\bin\nim_temp.exe" cat wasm
+```
 
 References and links
 ------------
@@ -173,3 +184,4 @@ Some links that may prove helpful:
 - https://www.assemblyscript.org/editor.html
 - https://webassembly.github.io/wabt/demo/wat2wasm/index.html
 - https://github.com/WebAssembly/design/blob/master/BinaryEncoding.md
+- https://dev.to/xflywind/how-to-use-testament-in-nim-1l0h
