@@ -6,8 +6,10 @@ This document contains random thoughts and notes on how I should implement the c
 Please note that this document is *very* WIP, I may start talking about something and get sidetracked. I'll try to keep rewriting sections of it until it makes sense, so if you have questions or find something unclear, please write an issue or notify me some other way.
 
 ### Compiling
+
 ```
-.\\bin\\nim_temp.exe wasm -r --gc:none -d:noSignalHandler -d:debug .\\bin\\test.nim ```   
+.\\bin\\nim_temp.exe wasm -r --gc:none -d:noSignalHandler -d:debug .\\bin\\test.nim 
+```
 
 Codegen pass
 ------------
@@ -113,7 +115,7 @@ The idea is to do the same as case 1, but substituting locals to globals. We sho
 #### Result
 
 In case the proc defines a result, add an implicit result local to procs. 
-(ie if the result wasmtype != vtnone)
+(ie if the result ``wasmtype != vtnone``)  
 ideas for this:
 1) This result local should be a pointer
 to a memory location outside the proc. This means the wasm functions don't actually return a value, but merely modify the 
@@ -128,48 +130,37 @@ Meh. `trap`for now.
 ### Semantics
 I **really** need to solidify a set of semantics and stick to it.
 
-**tyString, tySeq** are represented by a pointer to a length+data block, eg:
+**tyString, tySeq** are represented by a pointer to a length+cap+data block, eg:
 ```
-  [ptr][otherdata...][len][str/seq data]
+  [ptr][otherdata...][len][cap][str/seq data]
                       ^
                       ptr points to here
 ```
-**tyPtr,tyRef** etc (pointers types basically) are a ptr to a data block (like above, but no `len` block)
+**tyPtr,tyRef** etc (pointers types basically) are a ptr to a data block (like above, but no `len` or `cap` blocks)
 
 **tyArray** is a nice chunk of memory that gets passed around as a pointer to the first byte of the array by
-the backend, but this pointer is never actually stored in the wasm binary. Which to my understanding is pretty normal,
-it's basically an implicit pointer.
+the backend. This pointer is probably stored in a global/local, while the array lives in the data section.
 
 **tyInt, tyFloat, tyChar, tyBool** etc, basically everything that is representable as a single wasm value (btw wasm
 values are i32, i64, f32, f64, and i64 doesn't even existing in practice as the version implemented in browser is
-limited to 32bits integers) is directly copied. Thus these are passed around by value. What happens when I need
-to pass a value as a `tyVar`? Good question. I'm not sure. Atm every is in the nice, big heap, also known as `WebAssembly.Memory`. Why? It was simpler to understand. Also the logic for store/load operation is easier if I don't
-need to distinguish between things local to a particular function and everything else. The single var introduced in wasm
-functions is `result`.
+limited to 32bits integers) is directly stored in globals/locals. Thus these are passed around by value. What happens when I need
+to pass a value as a `tyVar`? Good question. I'm not sure.
 
-### Global/Local/Heap
-Should I use wasm locals/globals? The problems is where to store the map from `PSym` to an index into the local/global space.
-In an ideal world, I could simply make use of `TLoc`, but sadly that is optimised for rope structure as used by all other
-nim backends. I could use the `k` field of `TLoc` and introduce a `b: int` field to store the byte offset in memory I guess,
-maybe if I put it around a `when defined(hasWasmBackend)` nim maintainers won't hate me too much.
-Currently, I use the offset field in `PSym`. This seems to work well enough, for now.
 
 ### Bytes alignment
-I really need to drop the 4byte alignment for everything. It is especially bad when using the `getSize` proc, as an object
-with 4 bool fields ends up 16bytes instead of the reported 4bytes, killing al subsequent store/load ops. The problem then 
-becomes how to do load/store things smaller than 4 bytes in wasm. This could probably be overcome with a nice usage of
-my super awesome `mapKind / mapStoreKind / mapLoadKind` triplet of procs, doing something like `i32.load8` and dealing with
-the added complication of determining the correct offset. This is probably with I'll end up doing in the long run, probably
-after I get to around half of `system.nim`, just to avoid having that nice feeling of satisfaction you get when completing
-something. Also because by then I should have a rough implementation of most comparisons for ints, so I can ensure I don't
-break everything by writing a bunch of test importing `console.assert` and feeding them to a `nodejs` runner.
+Need to investigate if bytes alignment is going to mess with my carefully packed memory structure. Maybe I should implicitly add `{.packed.}` to everything?
 
 ## Testament
-Remember to do `koch temp` before this.
+First do `koch temp` to get a test compiler.
+Then:
 ```bash
+# build testament
 cd .\testament
 nim c -d:release testament.nim
+# run tests
 .\testament.exe --nim:"..\bin\nim_temp.exe" cat wasm
+# optional: nice html page with test results
+.\testament.exe html
 ```
 
 References and links
@@ -185,3 +176,168 @@ Some links that may prove helpful:
 - https://webassembly.github.io/wabt/demo/wat2wasm/index.html
 - https://github.com/WebAssembly/design/blob/master/BinaryEncoding.md
 - https://dev.to/xflywind/how-to-use-testament-in-nim-1l0h
+- https://gist.github.com/dschuff/f0f4c7d3a1f09001e83a33cc9a20aebd switch/case
+- https://www.assemblyscript.org/editor.html
+  
+### Assemblyscript constructs for reference
+#### Case/Switch
+```typescript
+var i = 2
+var res = 0
+switch(i) { 
+   case 1: { 
+      res = 1;
+      break; 
+   } 
+   case 2: { 
+      res = 2;
+      break; 
+   } 
+   default: { 
+      res = -1;
+      break; 
+   } 
+}
+```
+```wat
+block $break|0
+  block $case2|0
+    block $case1|0
+      block $case0|0
+        global.get $module/i
+        local.set $0
+        local.get $0
+        i32.const 1
+        i32.eq
+        br_if $case0|0
+        local.get $0
+        i32.const 2
+        i32.eq
+        br_if $case1|0
+        br $case2|0
+      end
+      i32.const 1
+      global.set $module/res
+      br $break|0
+    end
+    i32.const 2
+    global.set $module/res
+    br $break|0
+  end
+  i32.const -1
+  global.set $module/res
+  br $break|0
+end
+```
+#### If/Else
+```ts
+var i = 2
+var res = 0
+if (i == 1) {
+  res = 1;
+} else if (i == 2) {
+  res = 2;
+} else {
+  res = -1;
+} 
+```
+```wat
+global.get $module/i
+i32.const 1
+i32.eq
+if
+  i32.const 1
+  global.set $module/res
+else
+  global.get $module/i
+  i32.const 2
+  i32.eq
+  if
+  i32.const 2
+  global.set $module/res
+  else
+  i32.const -1
+  global.set $module/res
+  end
+end
+```
+#### While loop
+```ts
+var i = 0
+while (i<2){
+  i += 1
+}
+```
+
+```
+loop $while-continue|0
+  global.get $module/i
+  i32.const 2
+  i32.lt_s
+  local.set $0
+  local.get $0
+  if
+    global.get $module/i
+    i32.const 1
+    i32.add
+    global.set $module/i
+    br $while-continue|0
+  end
+end
+```
+
+Nim's `If` and `Case` can be expressions, meaning they return a result. Luckily, wasm blocks can return a value, so this should be relatively straightforward to implement
+```
+(block (result i32)
+  ....
+  leave something on the stack for result, or
+  return something
+)
+```
+It's probably enough to just expose the `sig` param for `newIf/newIfElse` etc
+
+### Switch and br_table (stmt and expr versions)
+from https://github.com/WebAssembly/testsuite/blob/master/br_table.wast
+
+```
+  (func (export "multiple") (param i32) (result i32)
+    (block
+      (block
+        (block
+          (block
+            (block
+              (br_table 3 2 1 0 4 (local.get 0))
+              (return (i32.const 99))
+            )
+            (return (i32.const 100))
+          )
+          (return (i32.const 101))
+        )
+        (return (i32.const 102))
+      )
+      (return (i32.const 103))
+    )
+    (i32.const 104)
+  )
+
+  (func (export "multiple-value") (param i32) (result i32)
+    (local i32)
+    (local.set 1 (block (result i32)
+      (local.set 1 (block (result i32)
+        (local.set 1 (block (result i32)
+          (local.set 1 (block (result i32)
+            (local.set 1 (block (result i32)
+              (br_table 3 2 1 0 4 (i32.const 200) (local.get 0))
+              (return (i32.add (local.get 1) (i32.const 99)))
+            ))
+            (return (i32.add (local.get 1) (i32.const 10)))
+          ))
+          (return (i32.add (local.get 1) (i32.const 11)))
+        ))
+        (return (i32.add (local.get 1) (i32.const 12)))
+      ))
+      (return (i32.add (local.get 1) (i32.const 13)))
+    ))
+    (i32.add (local.get 1) (i32.const 14))
+  )
+```
