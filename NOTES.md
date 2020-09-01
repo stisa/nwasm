@@ -79,15 +79,18 @@ Once `echo a(x)` reaches `myProcess`, and the function `a` goes in `gen`, we hav
 3. `a` is a proc we need to generate
 
 Lets see these cases:
-1. each magic is a bit different and is handled in `callMagic`
+1. each magic is a bit different and is handled in `genCallMagic`
 2. lucky! Do nothing
 3. the proc generation happens in `genProc`
 
 After this, the arguments are generated and lastly the call is generated. Note we distinguish imported (from js) procs as they are hoisted in the function index space, so the index needs to be adjusted in the generation pass. I don't particularly like this coupling, but it's the simplest way I could think of. 
 
-Every `var/let/const` section is handled in `gen`.  
-Top level (ie. `sym.parent.kind == skModule`) definitions are declared as wasm globals. The `sym.loc.pos` is the index into global space, and the k is `locGlobalVar`.
-Proc level (ie `sym.parent.kind == skProc`) definitions go into local space. The sym.loc.pos is the index into locals space.
+Every `var/let/const` section is handled in `gen<Var|IdentDef>`.
+
+Top level (ie. `sym.owner.kind == skModule`) definitions are declared as wasm globals if they're `let` or `const`. Further, `let` are _mutable_ globals. The `sym.loc.pos` is the index into global space, and the `k` is `locGlobalVar`, while the `storage` is `OnStatic`.  
+Proc level (ie `sym.owner.kind != skModule`) definitions go into local space. The `sym.loc.pos` is the index into locals space, `storage` is `OnStatic`.  
+Top level `var` go in linear memory, they `loc.pos` is the position in linear memory and `loc.storage` is `OnHeap`.
+
 Note: locals and arguments are ~same in wasm. This means that, for a proc
 ```nim
 proc sum(a,b:int) =
@@ -107,7 +110,7 @@ As an example, let's consider `var x: seq[int32]`. Notice I didn't initialize th
 The pointer to the length of the seq is stored in a global (as `i32`). In this case, since the seq is `nil`, it is just 0.
 The initialization of the seq will store a length+data pair, sequentially, on the linear memory and update the pointer reserved
 before to point to the length. Strings, arrays, object, refs and pointers work in a similar way.
-for sets, assume they're small enough to fit in a int32.
+TODO: For sets, assume they're small enough to fit in a int32.
 
 Case **2** is still in flux.
 The idea is to do the same as case 1, but substituting locals to globals. We should also keep track of the index in linear memory we were at when we went in the proc, and clear out the memory between that index and current index once we exit the proc ( or dont? we can just roll back the stackpointer and avoid assuming memory is all 0 on gen)
@@ -120,12 +123,11 @@ ideas for this:
 1) This result local should be a pointer
 to a memory location outside the proc. This means the wasm functions don't actually return a value, but merely modify the 
 value that is injected.
-2) A local, with the typ defined as the type of the result var. From the pow of the rest, this just means that local 0 is the result, and everything happens normally. When exiting the proc, a `return result` is added (why isn't this there anyway? bah nim ast is super weird, I thought the return result was injected somewhere in the previous passes). This also means I need to inject a 0 value with appropiate type when generating the call, and sliding back the stackptr to free up stuff won't work, unless I make it ignore memory used by the result, but this will leave holes. God do I need a gc? :(
+1) A local, with the typ defined as the type of the result var. From the pow of the rest, this just means that local 0 is the result, and everything happens normally. When exiting the proc, a `return result` is added. This also means I need to inject a 0 value with appropiate type when generating the call, and sliding back the stackptr to free up stuff won't work, unless I make it ignore memory used by the result, but this will leave holes. God do I need a gc? :(
 
 
 ### Exceptions
-Should I forward exceptions to the js side, eg. by a `throw toJsStr(<wasmstringmessage>)`, or just `trap` in wasm?
-Meh. `trap`for now.
+Forward exceptions to the js side, eg. by a `throw new Error(toJsStr(<wasmstringmessage>))`.
 
 ### Semantics
 I **really** need to solidify a set of semantics and stick to it.
@@ -341,3 +343,26 @@ from https://github.com/WebAssembly/testsuite/blob/master/br_table.wast
     (i32.add (local.get 1) (i32.const 14))
   )
 ```
+
+### Var strings/seqs
+eg add(s, s2)
+
+should be:
+```pseudo
+if cap(s)> len(s)+len(s2):
+  # don't need to move s somewhere else
+  appendbytes(from s2 data, to s data)
+  set len(s) to len(s)+len(s2)
+else:
+  # copy s at the bottom of the stack, so that at the end of data is just free space
+  copymem(s, stackbottomptr, bytelen(s))
+  appendbytes(from s2 data, to (new)s data)
+  set len(s) to len(s)+len(s2)
+  set cap(s) to some sensible number?
+  set global(s) (new)s pos
+```
+What to do with the space left free after moving s?
+The gc holds a list of holes and it can fill it if the value
+to store is small enough?
+
+What if there's no more space in the memory? => need to call mem.grow
